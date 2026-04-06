@@ -426,41 +426,45 @@ export default function App() {
     <div className="app">
       {splash !== 'done' && (
         <div className={`splash-overlay splash-${splash}`}>
-          <LogoMark size={120} />
-        </div>
-      )}
-      {consentModal && (
-        <ConsentModal
-          plan={consentModal.plan}
-          onAgree={() => { consentModal.action(); setConsentModal(null) }}
-          onCancel={() => setConsentModal(null)}
-        />
-      )}
-      <header className="app-header">
-        <div className="logo">
-          <LogoMark />
-          <div className="logo-info">
-            <span className="logo-title">Archi AI</span>
-            <span className="logo-sub">家づくりの不安をワンタップで可視化</span>
+          <div className="splash-logo">
+            <LogoMark size={120} />
           </div>
         </div>
-      </header>
+      )}
+      <div className={`app-content${splash !== 'in' ? ' app-content--visible' : ''}`}>
+        {consentModal && (
+          <ConsentModal
+            plan={consentModal.plan}
+            onAgree={() => { consentModal.action(); setConsentModal(null) }}
+            onCancel={() => setConsentModal(null)}
+          />
+        )}
+        <header className="app-header">
+          <div className="logo">
+            <LogoMark />
+            <div className="logo-info">
+              <span className="logo-title">Archi AI</span>
+              <span className="logo-sub">家づくりの不安をワンタップで可視化</span>
+            </div>
+          </div>
+        </header>
 
-      <main className="app-main">
-        {screen === 'landing'        && <LandingScreen onStart={() => setScreen('basicInfo')} />}
-        {screen === 'basicInfo'      && <BasicInfoScreen basicInfo={basicInfo} onChange={setBasicInfo} onNext={() => setScreen('planSelect')} onBack={() => setScreen('landing')} />}
-        {screen === 'planSelect'     && <PlanSelectScreen selectedPlan={selectedPlan} onChange={setSelectedPlan} onNext={() => { setError(null); setScreen('upload') }} onBack={() => setScreen('basicInfo')} />}
-        {screen === 'upload'         && <UploadScreen files={files} onFileChange={handleFileChange} floors={basicInfo.floors} error={error} onNext={() => { setError(null); setScreen('check') }} onBack={() => setScreen('planSelect')} selectedPlan={selectedPlan} hasRequired={hasRequiredFile} />}
-        {screen === 'check'          && <CheckScreen checklist={checklist} onChange={setChecklist} onNext={() => { setError(null); setScreen('preview') }} onBack={() => setScreen('upload')} />}
-        {screen === 'preview'        && <PreviewScreen files={files} primaryFile={primaryFile} selectedPlan={selectedPlan} onDiagnose={handleDiagnose} onBack={() => setScreen('upload')} error={error} />}
-        {screen === 'loading'        && <LoadingScreen message={loadingMsg} pct={loadingPct} title="AIが診断中..." />}
-        {screen === 'results'        && diagnosis && <ResultsScreen diagnosis={diagnosis} basicInfo={basicInfo} onReset={handleReset} onDetailDiagnose={() => withConsent('ai', handleDetailDiagnose)} onConsult={() => withConsent('architect', () => setScreen('consult'))} error={error} />}
-        {screen === 'detail-loading' && <LoadingScreen message={loadingMsg} pct={loadingPct} title="詳細分析中..." />}
-        {screen === 'detail'         && detailDiagnosis && <DetailScreen detail={detailDiagnosis} freeDiagnosis={diagnosis} onBack={() => setScreen(diagnosis ? 'results' : 'upload')} onReset={handleReset} onConsult={() => withConsent('architect', () => setScreen('consult'))} />}
-        {screen === 'consult'        && <ConsultScreen onSubmit={handleConsultSubmit} onBack={backFromConsult} selectedPlan={selectedPlan} basicInfo={basicInfo} primaryFile={primaryFile} />}
-        {screen === 'consult-done'   && consultResult && <ConsultDoneScreen result={consultResult} onReset={handleReset} />}
-        {screen === 'payment-success' && <PaymentSuccessScreen onReset={handleReset} />}
-      </main>
+        <main className="app-main">
+          {screen === 'landing'        && <LandingScreen onStart={() => setScreen('basicInfo')} />}
+          {screen === 'basicInfo'      && <BasicInfoScreen basicInfo={basicInfo} onChange={setBasicInfo} onNext={() => setScreen('planSelect')} onBack={() => setScreen('landing')} />}
+          {screen === 'planSelect'     && <PlanSelectScreen selectedPlan={selectedPlan} onChange={setSelectedPlan} onNext={() => { setError(null); setScreen('upload') }} onBack={() => setScreen('basicInfo')} />}
+          {screen === 'upload'         && <UploadScreen files={files} onFileChange={handleFileChange} floors={basicInfo.floors} error={error} onNext={() => { setError(null); setScreen('check') }} onBack={() => setScreen('planSelect')} selectedPlan={selectedPlan} hasRequired={hasRequiredFile} />}
+          {screen === 'check'          && <CheckScreen checklist={checklist} onChange={setChecklist} onNext={() => { setError(null); setScreen('preview') }} onBack={() => setScreen('upload')} />}
+          {screen === 'preview'        && <PreviewScreen files={files} primaryFile={primaryFile} selectedPlan={selectedPlan} onDiagnose={handleDiagnose} onBack={() => setScreen('upload')} error={error} />}
+          {screen === 'loading'        && <LoadingScreen message={loadingMsg} pct={loadingPct} title="AIが診断中..." />}
+          {screen === 'results'        && diagnosis && <ResultsScreen diagnosis={diagnosis} basicInfo={basicInfo} onReset={handleReset} onDetailDiagnose={() => withConsent('ai', handleDetailDiagnose)} onConsult={() => withConsent('architect', () => setScreen('consult'))} error={error} />}
+          {screen === 'detail-loading' && <LoadingScreen message={loadingMsg} pct={loadingPct} title="詳細分析中..." />}
+          {screen === 'detail'         && detailDiagnosis && <DetailScreen detail={detailDiagnosis} freeDiagnosis={diagnosis} onBack={() => setScreen(diagnosis ? 'results' : 'upload')} onReset={handleReset} onConsult={() => withConsent('architect', () => setScreen('consult'))} />}
+          {screen === 'consult'        && <ConsultScreen onSubmit={handleConsultSubmit} onBack={backFromConsult} selectedPlan={selectedPlan} basicInfo={basicInfo} primaryFile={primaryFile} />}
+          {screen === 'consult-done'   && consultResult && <ConsultDoneScreen result={consultResult} onReset={handleReset} />}
+          {screen === 'payment-success' && <PaymentSuccessScreen onReset={handleReset} />}
+        </main>
+      </div>
     </div>
   )
 }
