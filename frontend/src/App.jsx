@@ -189,13 +189,13 @@ function PillSelect({ options, value, onChange }) {
   )
 }
 
-function LogoMark() {
+function LogoMark({ size = 55 }) {
   return (
     <img
       src="/logo.jpg"
       alt="Archi AI logo"
-      width="46"
-      height="46"
+      width={size}
+      height={size}
       style={{ display: 'block', objectFit: 'cover', borderRadius: 0 }}
     />
   )
@@ -203,20 +203,35 @@ function LogoMark() {
 
 // ─── ファイルスロット ──────────────────────────────────────────────────────────
 
+// iOSではf.typeが空の場合があるため拡張子でもチェック
+function resolveFileType(f) {
+  if (f.type) return f.type
+  const ext = f.name.split('.').pop().toLowerCase()
+  return { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', pdf: 'application/pdf' }[ext] || ''
+}
+
 function FileSlot({ label, required, file, onChange }) {
   const inputRef = useRef(null)
   const hasFile = !!file
 
-  const handleRemove = (e) => { e.stopPropagation(); onChange(null); if (inputRef.current) inputRef.current.value = '' }
+  const handleRemove = (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    onChange(null)
+    if (inputRef.current) inputRef.current.value = ''
+  }
 
   const handleChange = (e) => {
     const f = e.target.files[0]
     if (!f) return
+    const type = resolveFileType(f)
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
-    if (!allowed.includes(f.type)) { alert('JPG・PNG・WebP・PDF形式のみ対応しています'); return }
+    if (!allowed.includes(type)) { alert('JPG・PNG・WebP・PDF形式のみ対応しています'); return }
     if (f.size > 20 * 1024 * 1024) { alert('ファイルサイズは20MB以下にしてください'); return }
     onChange(f)
   }
+
+  const handleTap = () => { if (!hasFile) inputRef.current?.click() }
 
   return (
     <div className="file-slot">
@@ -225,7 +240,7 @@ function FileSlot({ label, required, file, onChange }) {
         {required && <span className="slot-required">必須</span>}
         {!required && <span className="slot-optional">任意</span>}
       </div>
-      <div className={`file-slot-drop${hasFile ? ' has-file' : ''}`} onClick={() => !hasFile && inputRef.current?.click()}>
+      <div className={`file-slot-drop${hasFile ? ' has-file' : ''}`} onClick={handleTap}>
         {hasFile ? (
           <div className="file-slot-filled">
             {isPDF(file)
@@ -236,14 +251,16 @@ function FileSlot({ label, required, file, onChange }) {
             <button className="file-remove" onClick={handleRemove} title="削除">×</button>
           </div>
         ) : (
-          <div className="file-slot-empty" onClick={() => inputRef.current?.click()}>
+          <div className="file-slot-empty">
             <span className="file-slot-plus">＋</span>
             <span className="file-slot-hint">JPG · PNG · PDF</span>
           </div>
         )}
+        {/* iOSのためdisplay:noneを避けopacity/sizeで隠す */}
         <input ref={inputRef} type="file"
-          accept="image/jpeg,image/png,image/webp,application/pdf"
-          onChange={handleChange} style={{ display: 'none' }} />
+          accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+          onChange={handleChange}
+          style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }} />
       </div>
     </div>
   )
@@ -264,6 +281,14 @@ export default function App() {
   const [loadingMsg, setLoadingMsg]       = useState(LOADING_MESSAGES[0])
   const [loadingPct, setLoadingPct]       = useState(0)
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null)
+  const [splash, setSplash]               = useState('in') // 'in' | 'out' | 'done'
+
+  // スプラッシュ：フェードイン→表示→フェードアウト
+  useEffect(() => {
+    const t1 = setTimeout(() => setSplash('out'),  1200) // 1.2秒後にフェードアウト開始
+    const t2 = setTimeout(() => setSplash('done'), 2000) // 2秒後に完全非表示
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [])
 
   // reCAPTCHA 初期化（キーが設定されている場合のみ）
   useEffect(() => {
@@ -395,6 +420,11 @@ export default function App() {
 
   return (
     <div className="app">
+      {splash !== 'done' && (
+        <div className={`splash-overlay splash-${splash}`}>
+          <LogoMark size={120} />
+        </div>
+      )}
       <header className="app-header">
         <div className="logo">
           <LogoMark />
@@ -601,7 +631,17 @@ function UploadScreen({ files, onFileChange, floors, error, onNext, onBack, sele
 
 function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBack, error }) {
   const isArchitect = selectedPlan === 'architect'
-  const allFiles = Object.entries(files).filter(([, f]) => f)
+  const isFree      = selectedPlan === 'free'
+  const isAI        = selectedPlan === 'ai'
+  const allFiles    = Object.entries(files).filter(([, f]) => f)
+  const [agreed, setAgreed] = useState(false)
+
+  const notices = [
+    ...(isFree ? ['本診断は一般的な観点に基づく参考情報です。個別の条件や詳細な図面情報を反映した精度には限りがあります。'] : []),
+    ...(isAI   ? ['AI が画像を読み取り分析します。文字・寸法・記号が不鮮明な場合、正確に認識できず結果に影響することがあります。'] : []),
+    'AI による診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。',
+    ...(isArchitect ? ['本相談は設計業務ではありません。診断・アドバイスの内容に設計上の責任は負いかねます。'] : []),
+  ]
 
   return (
     <div className="screen">
@@ -623,8 +663,20 @@ function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBack, e
       <p className="preview-note">
         {isArchitect ? 'この内容で一級建築士に相談します' : 'この内容をAIが診断します'}
       </p>
+
+      <div className="consent-box">
+        <p className="consent-title">ご利用にあたって</p>
+        <ul className="consent-list">
+          {notices.map((n, i) => <li key={i}>{n}</li>)}
+        </ul>
+        <label className="consent-check">
+          <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} />
+          <span>上記の内容を確認し、同意します</span>
+        </label>
+      </div>
+
       {error && <div className="error-box">{error}</div>}
-      <button className="btn-primary" onClick={onDiagnose}>
+      <button className="btn-primary" onClick={onDiagnose} disabled={!agreed}>
         {isArchitect ? '相談を申し込む画面へ進む' : '診断を開始する'}
       </button>
       <button className="btn-ghost" onClick={onBack}>ファイルを変更する</button>

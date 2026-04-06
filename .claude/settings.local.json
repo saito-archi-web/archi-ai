@@ -3,7 +3,11 @@
     "allow": [
       "mcp__Claude_Preview__preview_start",
       "Bash(npm install:*)",
-      "Bash(powershell -Command \"Copy-Item ''C:\\\\Users\\\\saito\\\\OneDrive\\\\H-One_家づくりの不安をワンタップで可視化\\\\ロゴデザインカラー_page-0001.jpg'' ''C:\\\\Users\\\\saito\\\\OneDrive\\\\H-One_家づくりの不安をワンタップで可視化\\\\frontend\\\\public\\\\logo.jpg'' -Force; Write-Output ''copied''\")"
+      "Bash(powershell -Command \"Copy-Item ''C:\\\\Users\\\\saito\\\\OneDrive\\\\H-One_家づくりの不安をワンタップで可視化\\\\ロゴデザインカラー_page-0001.jpg'' ''C:\\\\Users\\\\saito\\\\OneDrive\\\\H-One_家づくりの不安をワンタップで可視化\\\\frontend\\\\public\\\\logo.jpg'' -Force; Write-Output ''copied''\")",
+      "Bash(python -c \"from reportlab.pdfbase.cidfonts import UnicodeCIDFont; print\\(''CID OK''\\)\")",
+      "Bash(python -c \"import reportlab; print\\(reportlab.Version\\)\")",
+      "Bash(python generate_template_pdf.py)",
+      "Bash(python \"C:/Users/saito/OneDrive/H-One_家づくりの不安をワンタップで可視化/generate_template_pdf.py\")"
     ]
   }
 }
