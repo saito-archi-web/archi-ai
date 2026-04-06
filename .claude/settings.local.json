@@ -7,7 +7,22 @@
       "Bash(python -c \"from reportlab.pdfbase.cidfonts import UnicodeCIDFont; print\\(''CID OK''\\)\")",
       "Bash(python -c \"import reportlab; print\\(reportlab.Version\\)\")",
       "Bash(python generate_template_pdf.py)",
-      "Bash(python \"C:/Users/saito/OneDrive/H-One_家づくりの不安をワンタップで可視化/generate_template_pdf.py\")"
+      "Bash(python \"C:/Users/saito/OneDrive/H-One_家づくりの不安をワンタップで可視化/generate_template_pdf.py\")",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -Command \"Set-Location 'C:\\Users\\saito\\OneDrive\\H-One_家づくりの不安をワンタップで可視化'; git add -A; $status = git status --porcelain; if ($status) { git commit -m 'auto: Claude session changes'; git push }\"",
+            "timeout": 60
+          }
+        ]
+      }
     ]
   }
 }
