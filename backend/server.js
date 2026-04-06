@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
 
@@ -285,10 +286,16 @@ app.get('/api/health', (req, res) => {
 
 // ─── フロントエンド静的ファイル配信（本番ビルド用） ──────────────────────────
 const distPath = path.join(__dirname, '../frontend/dist');
+console.log('[静的ファイル] distPath:', distPath, '| 存在:', fs.existsSync(distPath));
 app.use(express.static(distPath));
 // SPAのルーティング：/api 以外は index.html を返す
 app.get(/^(?!\/api).*/, (req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'));
+  const indexPath = path.join(distPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(503).send('ビルド中または設定エラーです。しばらくお待ちください。');
+  }
 });
 
 // ─── multerエラーハンドリング ─────────────────────────────────────────────────
