@@ -6,6 +6,55 @@ const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
 
+// ─── レートリミット ────────────────────────────────────────────────────────────
+const rateLimit = require('express-rate-limit');
+
+const diagnoseLimiterMin = rateLimit({
+  windowMs: 60 * 1000,          // 1分
+  max: 3,                        // 同一IPから3回まで
+  keyGenerator: (req) => req.headers['x-forwarded-for']?.split(',')[0] || req.ip,
+  handler: (req, res) => res.status(429).json({ error: 'しばらく時間をおいて再度お試しください。' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const diagnoseLimiterHour = rateLimit({
+  windowMs: 60 * 60 * 1000,     // 1時間
+  max: 10,                       // 同一IPから10回まで
+  keyGenerator: (req) => req.headers['x-forwarded-for']?.split(',')[0] || req.ip,
+  handler: (req, res) => res.status(429).json({ error: '本日の利用上限に達しました。しばらく時間をおいて再度お試しください。' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ─── reCAPTCHA 検証 ────────────────────────────────────────────────────────────
+const RECAPTCHA_SECRET = process.env.RECAPTCHA_SECRET_KEY;
+const MOCK_RECAPTCHA   = !RECAPTCHA_SECRET;
+
+async function verifyRecaptcha(token) {
+  if (MOCK_RECAPTCHA) { console.log('[reCAPTCHA] キー未設定 → スキップ'); return true; }
+  if (!token)         { console.log('[reCAPTCHA] トークンなし → スキップ'); return true; }
+  try {
+    const resp = await fetch(
+      `https://www.google.com/recaptcha/api/siteverify?secret=${RECAPTCHA_SECRET}&response=${token}`,
+      { method: 'POST' }
+    );
+    const data = await resp.json();
+    const ok = data.success && (data.score ?? 1) >= 0.5;
+    console.log(`[reCAPTCHA] success=${data.success} score=${data.score ?? 'n/a'} → ${ok ? '✅通過' : '❌ブロック'}`);
+    return ok;
+  } catch (e) {
+    console.log('[reCAPTCHA] 検証エラー → 通す', e.message);
+    return true;
+  }
+}
+
+// ─── Stripe ──────────────────────────────────────────────────────────────────
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const MOCK_STRIPE = !STRIPE_SECRET_KEY || STRIPE_SECRET_KEY.startsWith('sk_test_placeholder');
+const stripe = MOCK_STRIPE ? null : require('stripe')(STRIPE_SECRET_KEY);
+if (MOCK_STRIPE) console.log('[Stripe] キー未設定 → モックモードで動作');
+
 const app = express();
 
 // ファイルはメモリ上に保持（ディスク不要）
@@ -123,11 +172,17 @@ function buildFileContentBlocks(files) {
 }
 
 // ─── 診断エンドポイント ────────────────────────────────────────────────────────
-app.post('/api/diagnose', upload.array('files', 10), async (req, res) => {
+app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
   try {
     const files = req.files || [];
     if (files.length === 0) {
       return res.status(400).json({ error: '画像ファイルが必要です' });
+    }
+
+    // reCAPTCHA 検証
+    const captchaOk = await verifyRecaptcha(req.body?.recaptchaToken);
+    if (!captchaOk) {
+      return res.status(403).json({ error: '自動アクセスと判断されました。再度お試しください。' });
     }
 
     if (MOCK_MODE) {
@@ -138,7 +193,7 @@ app.post('/api/diagnose', upload.array('files', 10), async (req, res) => {
     const fileBlocks = buildFileContentBlocks(files);
 
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-3-5-20241022',  // 無料診断：低コスト
       max_tokens: 1500,
       messages: [
         {
@@ -207,11 +262,17 @@ const DETAIL_PROMPT = `あなたは経験豊富な住宅建築士です。
 {"priority_issues":[{"rank":1,"title":"問題名","detail":"詳細説明","impact":"生活への影響"}],"life_stress":["ストレス1","ストレス2"],"detailed_suggestions":[{"area":"エリア名","action":"改善策","reason":"理由","cost_hint":"低コスト"}],"verdict":"総合評価"}`;
 
 // ─── AI詳細診断エンドポイント ──────────────────────────────────────────────────
-app.post('/api/diagnose/detail', upload.array('files', 10), async (req, res) => {
+app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
   try {
     const files = req.files || [];
     if (files.length === 0) {
       return res.status(400).json({ error: '画像ファイルが必要です' });
+    }
+
+    // reCAPTCHA 検証
+    const captchaOk = await verifyRecaptcha(req.body?.recaptchaToken);
+    if (!captchaOk) {
+      return res.status(403).json({ error: '自動アクセスと判断されました。再度お試しください。' });
     }
 
     if (MOCK_MODE) {
@@ -222,7 +283,7 @@ app.post('/api/diagnose/detail', upload.array('files', 10), async (req, res) => 
     const fileBlocks = buildFileContentBlocks(files);
 
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-opus-4-5',  // AI詳細診断：最高品質
       max_tokens: 2000,
       messages: [
         {
@@ -247,6 +308,58 @@ app.post('/api/diagnose/detail', upload.array('files', 10), async (req, res) => 
     console.error('詳細診断エラー:', err);
     if (err.status === 429) return res.status(429).json({ error: 'しばらく時間をおいて再度お試しください。' });
     res.status(500).json({ error: '詳細診断中にエラーが発生しました。再度お試しください。' });
+  }
+});
+
+// ─── Stripe 決済セッション作成 ────────────────────────────────────────────────
+app.post('/api/create-checkout-session', upload.none(), async (req, res) => {
+  try {
+    const { name, email, message, structure, floors, familySize, ageGroup } = req.body;
+    if (!name || !email) {
+      return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
+    }
+
+    const origin = process.env.NODE_ENV === 'production'
+      ? `https://${req.get('host')}`
+      : `http://${req.get('host')}`;
+
+    if (MOCK_STRIPE) {
+      // テスト用：そのまま成功ページへ
+      return res.json({ url: `${origin}/?payment=success` });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'jpy',
+          product_data: {
+            name: '一級建築士相談',
+            description: '間取りの妥当性チェック・テキストフィードバック（3営業日以内）',
+          },
+          unit_amount: 3000,
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      customer_email: email,
+      metadata: {
+        name,
+        email,
+        message: (message || '').substring(0, 500),
+        structure: structure || '',
+        floors: floors || '',
+        familySize: familySize || '',
+        ageGroup: ageGroup || '',
+      },
+      success_url: `${origin}/?payment=success`,
+      cancel_url:  `${origin}/?payment=cancel`,
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('Stripe checkout error:', err);
+    res.status(500).json({ error: '決済の準備中にエラーが発生しました。再度お試しください。' });
   }
 });
 
@@ -282,6 +395,11 @@ app.post('/api/consult', upload.array('files', 10), async (req, res) => {
 // ─── ヘルスチェック ───────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ─── フロント向け公開設定 ─────────────────────────────────────────────────────
+app.get('/api/config', (req, res) => {
+  res.json({ recaptchaSiteKey: process.env.RECAPTCHA_SITE_KEY || null });
 });
 
 // ─── フロントエンド静的ファイル配信（本番ビルド用） ──────────────────────────

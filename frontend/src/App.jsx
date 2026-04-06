@@ -1,6 +1,36 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
 
+// ─── 利用回数制限（localStorage） ─────────────────────────────────────────────
+const USAGE_KEY = 'archi_usage'
+const getToday  = () => new Date().toISOString().slice(0, 10)
+
+function checkDailyLimit() {
+  try {
+    const s = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}')
+    return !(s.date === getToday() && (s.count || 0) >= 1)
+  } catch { return true }
+}
+function recordUsage() {
+  try {
+    const today = getToday()
+    const s = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}')
+    localStorage.setItem(USAGE_KEY, JSON.stringify({
+      date: today, count: s.date === today ? (s.count || 0) + 1 : 1
+    }))
+  } catch {}
+}
+
+// ─── reCAPTCHA トークン取得 ───────────────────────────────────────────────────
+function getRecaptchaToken(siteKey, action) {
+  if (!siteKey || !window.grecaptcha) return Promise.resolve(null)
+  return new Promise(resolve => {
+    window.grecaptcha.ready(() => {
+      window.grecaptcha.execute(siteKey, { action }).then(resolve).catch(() => resolve(null))
+    })
+  })
+}
+
 // ─── 定数 ─────────────────────────────────────────────────────────────────────
 
 const LOADING_MESSAGES = [
@@ -233,6 +263,31 @@ export default function App() {
   const [checklist, setChecklist]         = useState({})
   const [loadingMsg, setLoadingMsg]       = useState(LOADING_MESSAGES[0])
   const [loadingPct, setLoadingPct]       = useState(0)
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null)
+
+  // reCAPTCHA 初期化（キーが設定されている場合のみ）
+  useEffect(() => {
+    fetch('/api/config').then(r => r.json()).then(d => {
+      if (d.recaptchaSiteKey) {
+        setRecaptchaSiteKey(d.recaptchaSiteKey)
+        const s = document.createElement('script')
+        s.src = `https://www.google.com/recaptcha/api.js?render=${d.recaptchaSiteKey}`
+        document.head.appendChild(s)
+      }
+    }).catch(() => {})
+  }, [])
+
+  // 決済完了後のリダイレクト検出
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('payment') === 'success') {
+      setScreen('payment-success')
+      window.history.replaceState({}, '', '/')
+    } else if (params.get('payment') === 'cancel') {
+      setScreen('consult')
+      window.history.replaceState({}, '', '/')
+    }
+  }, [])
 
   // ローディングメッセージ
   useEffect(() => {
@@ -264,14 +319,30 @@ export default function App() {
 
   const handleDiagnose = async () => {
     if (selectedPlan === 'architect') { setError(null); setScreen('consult'); return }
+
+    // ① 無料診断：1日1回制限チェック
+    if (selectedPlan === 'free' && !checkDailyLimit()) {
+      setError('本日の無料診断は上限に達しました。明日またお試しください。')
+      return
+    }
+
     const isDetail = selectedPlan === 'ai'
     setScreen(isDetail ? 'detail-loading' : 'loading')
     setLoadingMsg(isDetail ? DETAIL_LOADING_MESSAGES[0] : LOADING_MESSAGES[0])
     setLoadingPct(5)
     try {
-      const res = await fetch(isDetail ? '/api/diagnose/detail' : '/api/diagnose', { method: 'POST', body: buildFormData() })
+      // ② reCAPTCHA トークン取得
+      const token = await getRecaptchaToken(recaptchaSiteKey, 'diagnose')
+      const fd = buildFormData()
+      if (token) fd.append('recaptchaToken', token)
+
+      const res = await fetch(isDetail ? '/api/diagnose/detail' : '/api/diagnose', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
+
+      // ③ 成功時：無料診断の利用を記録
+      if (selectedPlan === 'free') recordUsage()
+
       setLoadingPct(100)
       setTimeout(() => {
         if (isDetail) { setDetailDiagnosis(data); setScreen('detail') }
@@ -293,12 +364,19 @@ export default function App() {
   }
 
   const handleConsultSubmit = async (form) => {
-    const fd = buildFormData()
-    fd.append('name', form.name); fd.append('email', form.email); fd.append('message', form.message)
-    const res = await fetch('/api/consult', { method: 'POST', body: fd })
+    const fd = new FormData()
+    fd.append('name', form.name)
+    fd.append('email', form.email)
+    fd.append('message', form.message || '')
+    fd.append('structure',   basicInfo.structure   || '')
+    fd.append('floors',      basicInfo.floors      || '')
+    fd.append('familySize',  basicInfo.familySize  || '')
+    fd.append('ageGroup',    basicInfo.ageGroup    || '')
+    const res = await fetch('/api/create-checkout-session', { method: 'POST', body: fd })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error)
-    setConsultResult(data); setScreen('consult-done')
+    // Stripeの決済ページへリダイレクト
+    window.location.href = data.url
   }
 
   const handleReset = () => {
@@ -340,7 +418,32 @@ export default function App() {
         {screen === 'detail'         && detailDiagnosis && <DetailScreen detail={detailDiagnosis} freeDiagnosis={diagnosis} onBack={() => setScreen(diagnosis ? 'results' : 'upload')} onReset={handleReset} onConsult={() => setScreen('consult')} />}
         {screen === 'consult'        && <ConsultScreen onSubmit={handleConsultSubmit} onBack={backFromConsult} selectedPlan={selectedPlan} basicInfo={basicInfo} primaryFile={primaryFile} />}
         {screen === 'consult-done'   && consultResult && <ConsultDoneScreen result={consultResult} onReset={handleReset} />}
+        {screen === 'payment-success' && <PaymentSuccessScreen onReset={handleReset} />}
       </main>
+    </div>
+  )
+}
+
+// ─── 決済完了画面 ─────────────────────────────────────────────────────────────
+
+function PaymentSuccessScreen({ onReset }) {
+  return (
+    <div className="screen screen-center">
+      <div className="done-wrap">
+        <div className="done-icon">✓</div>
+        <h2 className="done-title">お支払い完了</h2>
+        <p className="done-sub">ご相談を受け付けました。</p>
+        <div className="done-card">
+          <p className="done-message">3営業日以内にご登録のメールアドレスへご連絡いたします。</p>
+          <p className="done-message" style={{marginTop:'8px',fontSize:'13px',color:'#787878'}}>
+            間取り図ファイルの送付方法はご連絡メールにてご案内します。
+          </p>
+        </div>
+        <div className="done-notice">
+          <p>設計責任は負いません。参考意見としてご活用ください</p>
+        </div>
+        <button className="btn-primary" onClick={onReset}>トップに戻る</button>
+      </div>
     </div>
   )
 }
@@ -795,7 +898,7 @@ function ConsultScreen({ onSubmit, onBack, selectedPlan, basicInfo, primaryFile 
         <div className="form-note-box"><p>アップロード済みのファイルが自動的に添付されます。</p></div>
         {error && <div className="error-box">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading}>
-          {loading ? '送信中...' : '相談を申し込む（¥3,000）'}
+          {loading ? '決済ページへ移動中...' : 'カードで支払う（¥3,000）'}
         </button>
       </form>
       <button className="btn-ghost" onClick={onBack}>戻る</button>
