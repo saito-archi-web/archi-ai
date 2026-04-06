@@ -282,11 +282,12 @@ export default function App() {
   const [loadingPct, setLoadingPct]       = useState(0)
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null)
   const [splash, setSplash]               = useState('in') // 'in' | 'out' | 'done'
+  const [consentModal, setConsentModal]   = useState(null) // { plan, action } | null
 
   // スプラッシュ：フェードイン→表示→フェードアウト
   useEffect(() => {
-    const t1 = setTimeout(() => setSplash('out'),  1200) // 1.2秒後にフェードアウト開始
-    const t2 = setTimeout(() => setSplash('done'), 2000) // 2秒後に完全非表示
+    const t1 = setTimeout(() => setSplash('out'),  2500) // 2.5秒後にフェードアウト開始
+    const t2 = setTimeout(() => setSplash('done'), 4000) // 4秒後に完全非表示
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
 
@@ -411,6 +412,9 @@ export default function App() {
     setDiagnosis(null); setDetailDiagnosis(null); setConsultResult(null); setError(null)
   }
 
+  // 有料プランへの遷移前に同意モーダルを挟む
+  const withConsent = (plan, action) => setConsentModal({ plan, action })
+
   const backFromConsult = () => {
     if (selectedPlan === 'architect') setScreen('preview')
     else if (detailDiagnosis) setScreen('detail')
@@ -424,6 +428,13 @@ export default function App() {
         <div className={`splash-overlay splash-${splash}`}>
           <LogoMark size={120} />
         </div>
+      )}
+      {consentModal && (
+        <ConsentModal
+          plan={consentModal.plan}
+          onAgree={() => { consentModal.action(); setConsentModal(null) }}
+          onCancel={() => setConsentModal(null)}
+        />
       )}
       <header className="app-header">
         <div className="logo">
@@ -443,13 +454,46 @@ export default function App() {
         {screen === 'check'          && <CheckScreen checklist={checklist} onChange={setChecklist} onNext={() => { setError(null); setScreen('preview') }} onBack={() => setScreen('upload')} />}
         {screen === 'preview'        && <PreviewScreen files={files} primaryFile={primaryFile} selectedPlan={selectedPlan} onDiagnose={handleDiagnose} onBack={() => setScreen('upload')} error={error} />}
         {screen === 'loading'        && <LoadingScreen message={loadingMsg} pct={loadingPct} title="AIが診断中..." />}
-        {screen === 'results'        && diagnosis && <ResultsScreen diagnosis={diagnosis} basicInfo={basicInfo} onReset={handleReset} onDetailDiagnose={handleDetailDiagnose} onConsult={() => setScreen('consult')} error={error} />}
+        {screen === 'results'        && diagnosis && <ResultsScreen diagnosis={diagnosis} basicInfo={basicInfo} onReset={handleReset} onDetailDiagnose={() => withConsent('ai', handleDetailDiagnose)} onConsult={() => withConsent('architect', () => setScreen('consult'))} error={error} />}
         {screen === 'detail-loading' && <LoadingScreen message={loadingMsg} pct={loadingPct} title="詳細分析中..." />}
-        {screen === 'detail'         && detailDiagnosis && <DetailScreen detail={detailDiagnosis} freeDiagnosis={diagnosis} onBack={() => setScreen(diagnosis ? 'results' : 'upload')} onReset={handleReset} onConsult={() => setScreen('consult')} />}
+        {screen === 'detail'         && detailDiagnosis && <DetailScreen detail={detailDiagnosis} freeDiagnosis={diagnosis} onBack={() => setScreen(diagnosis ? 'results' : 'upload')} onReset={handleReset} onConsult={() => withConsent('architect', () => setScreen('consult'))} />}
         {screen === 'consult'        && <ConsultScreen onSubmit={handleConsultSubmit} onBack={backFromConsult} selectedPlan={selectedPlan} basicInfo={basicInfo} primaryFile={primaryFile} />}
         {screen === 'consult-done'   && consultResult && <ConsultDoneScreen result={consultResult} onReset={handleReset} />}
         {screen === 'payment-success' && <PaymentSuccessScreen onReset={handleReset} />}
       </main>
+    </div>
+  )
+}
+
+// ─── 同意モーダル（有料プラン遷移時） ────────────────────────────────────────
+
+const CONSENT_NOTICES = {
+  ai: [
+    'AIが画像を読み取り分析します。文字・寸法・記号が不鮮明な場合、正確に認識できず結果に影響することがあります。',
+    'AIによる診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。',
+  ],
+  architect: [
+    'AIによる診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。',
+    '本相談は設計業務ではありません。診断・アドバイスの内容に設計上の責任は負いかねます。',
+  ],
+}
+
+function ConsentModal({ plan, onAgree, onCancel }) {
+  const [agreed, setAgreed] = useState(false)
+  return (
+    <div className="consent-modal-overlay">
+      <div className="consent-modal">
+        <p className="consent-title">ご利用にあたって</p>
+        <ul className="consent-list">
+          {CONSENT_NOTICES[plan].map((n, i) => <li key={i}>{n}</li>)}
+        </ul>
+        <label className="consent-check">
+          <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} />
+          <span>上記の内容を確認し、同意します</span>
+        </label>
+        <button className="btn-primary" style={{ marginTop: 16 }} onClick={onAgree} disabled={!agreed}>同意して進む</button>
+        <button className="btn-ghost" onClick={onCancel}>キャンセル</button>
+      </div>
     </div>
   )
 }

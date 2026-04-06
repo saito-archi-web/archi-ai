@@ -53,12 +53,34 @@ body {
   z-index: 9999;
   transition: opacity 0.8s ease;
 }
-.splash-in  { opacity: 1; animation: splashFadeIn 0.8s ease forwards; }
-.splash-out { opacity: 0; }
+.splash-in  { opacity: 1; animation: splashFadeIn 1.4s ease forwards; }
+.splash-out { opacity: 0; transition: opacity 1.4s ease; }
 
 @keyframes splashFadeIn {
   from { opacity: 0; transform: scale(0.92); }
   to   { opacity: 1; transform: scale(1); }
+}
+
+/* reCAPTCHAバッジを非表示 */
+.grecaptcha-badge { visibility: hidden !important; }
+
+/* 同意モーダル */
+.consent-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+}
+.consent-modal {
+  background: var(--white);
+  width: 100%;
+  max-width: 420px;
+  padding: 24px 20px 20px;
+  border-top: 3px solid var(--primary);
 }
 
 /* ─── ヘッダー ───────────────────────────────────────────────────────────────── */
