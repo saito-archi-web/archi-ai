@@ -1,0 +1,9 @@
+{
+  "name": "archi-ai",
+  "version": "0.1.0",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build && cd ../backend && npm install",
+    "start": "node backend/server.js"
+  }
+}

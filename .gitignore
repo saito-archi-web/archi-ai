@@ -1,0 +1,11 @@
+node_modules/
+frontend/dist/
+.env
+*.env.local
+.claude/
+*.pdf
+*.bat
+*.ps1
+start.js
+start.cjs
+ロゴ*.jpg
