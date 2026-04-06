@@ -2,7 +2,7 @@ services:
   - type: web
     name: archi-ai
     runtime: node
-    buildCommand: npm run build
+    buildCommand: cd frontend && npm install && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
