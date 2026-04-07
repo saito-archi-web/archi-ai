@@ -43,31 +43,52 @@ body {
 }
 
 /* ─── スプラッシュ ───────────────────────────────────────────────────────────── */
+:root {
+  --splash-fly-top:  30px;
+  --splash-fly-left: 44px;
+}
+
 .splash-overlay {
   position: fixed;
   inset: 0;
   background: #FFFFFF;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   z-index: 9999;
 }
 .splash-in  { opacity: 1; }
-.splash-out { opacity: 0; transition: opacity 0.8s ease; }
+.splash-fly { opacity: 1; }
+.splash-out { opacity: 0; transition: opacity 0.55s ease; }
 
-/* ロゴだけをフェードイン */
+/* ロゴ：中央に絶対配置 */
 .splash-logo {
-  animation: splashLogoIn 1.2s ease forwards;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(1);
+  animation: splashLogoIn 1.0s ease forwards;
+  /* fly時のトランジション */
+  transition:
+    top  0.65s cubic-bezier(0.4, 0, 0.2, 1),
+    left 0.65s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
 @keyframes splashLogoIn {
-  from { opacity: 0; transform: scale(0.88); }
-  to   { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.82); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* ヘッダーロゴへ飛ぶ（55/120 ≈ 0.458） */
+.splash-logo-fly {
+  top:  var(--splash-fly-top);
+  left: var(--splash-fly-left);
+  transform: translate(-50%, -50%) scale(0.458);
+  animation: none;
 }
 
 /* メインコンテンツ：スプラッシュ中は非表示→フェードイン */
 .app-content {
   opacity: 0;
-  transition: opacity 0.8s ease;
+  transition: opacity 0.7s ease;
 }
 .app-content--visible {
   opacity: 1;
@@ -119,9 +140,9 @@ body {
 
 .logo-title {
   color: #1A1A1A;
-  font-weight: 800;
-  font-size: 17px;
-  letter-spacing: -0.3px;
+  font-weight: 400;
+  font-size: 20px;
+  letter-spacing: 0.02em;
   line-height: 1.2;
 }
 
@@ -356,6 +377,27 @@ body {
   margin-top: 4px;
 }
 .btn-ghost:active { color: var(--navy); }
+
+.btn-screenshot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 13px;
+  background: transparent;
+  color: var(--primary);
+  border: 1.5px solid var(--primary);
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  margin-top: 16px;
+  border-radius: var(--r);
+  transition: background 0.15s;
+}
+.btn-screenshot:active { background: #FEE2E2; }
+.btn-screenshot:disabled { opacity: 0.5; }
 
 /* ─── ローディング画面 ───────────────────────────────────────────────────────── */
 .loading-wrap { text-align: center; padding: 40px 20px; }
@@ -1045,7 +1087,142 @@ body {
 
 .done-notice p::before { content: '・'; }
 
-/* ─── ランディング画面 ───────────────────────────────────────────────────────── */
+/* ─── ランディング v2（スマートデザイン） ─────────────────────────────────── */
+.lv2-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 60px);
+}
+
+.lv2-hero {
+  position: relative;
+  width: 100%;
+  height: 70vh;
+  min-height: 400px;
+  overflow: hidden;
+  flex-shrink: 0;
+  /* デュオトーン：シャドウ=赤、ハイライト=白 */
+  background-color: #C42230;
+}
+
+.lv2-hero-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+  /* 赤白デュオトーン：グレースケール化してscreenブレンド */
+  filter: grayscale(1) contrast(1.1);
+  mix-blend-mode: screen;
+}
+
+.lv2-hero-overlay {
+  position: absolute;
+  inset: 0;
+  /* テキスト可読性のための下部グラデーション */
+  background: linear-gradient(
+    to bottom,
+    transparent 25%,
+    rgba(130, 18, 28, 0.55) 100%
+  );
+}
+
+.lv2-hero-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 28px 24px 36px;
+}
+
+.lv2-kicker {
+  font-size: 11px;
+  color: rgba(255,255,255,0.80);
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  margin-bottom: 10px;
+  border-left: 2px solid rgba(255,255,255,0.6);
+  padding-left: 8px;
+}
+
+.lv2-title {
+  font-size: 30px;
+  font-weight: 900;
+  color: #fff;
+  line-height: 1.35;
+  margin-bottom: 14px;
+}
+
+.lv2-accent {
+  border-bottom: 3px solid #fff;
+  padding-bottom: 2px;
+}
+
+.lv2-sub {
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
+  line-height: 1.8;
+  margin-bottom: 24px;
+}
+
+.lv2-cta-btn {
+  display: block;
+  width: 100%;
+  background: #fff;
+  color: var(--primary);
+  font-size: 16px;
+  font-weight: 800;
+  padding: 16px;
+  border: none;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  border-radius: var(--r);
+}
+
+.lv2-cta-btn:active { opacity: 0.85; }
+
+.lv2-free-note {
+  text-align: center;
+  font-size: 11px;
+  color: rgba(255,255,255,0.65);
+  margin-top: 10px;
+}
+
+.lv2-features {
+  background: #fff;
+  padding: 4px 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lv2-feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.lv2-feature:last-child { border-bottom: none; }
+
+.lv2-feat-num {
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--primary);
+  line-height: 1;
+  flex-shrink: 0;
+  font-style: italic;
+  min-width: 34px;
+}
+
+.lv2-feat-title { font-size: 13px; font-weight: 700; color: var(--navy); margin-bottom: 3px; }
+.lv2-feat-desc  { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+.lv2-bottom-cta {
+  background: #fff;
+  padding: 20px 20px 32px;
+  border-top: 1px solid var(--border);
+}
+
+/* ─── ランディング画面（旧デザイン・未使用） ───────────────────────────────── */
 .landing-hero { text-align: center; padding: 28px 0 16px; }
 
 .supervisor-banner {
@@ -1121,9 +1298,9 @@ body {
   color: #fff;
 }
 
-.lfi-blue   { background: #5A5A5A; }
-.lfi-orange { background: var(--primary); }
-.lfi-green  { background: var(--good); }
+.lfi-blue   { background: #E05C6A; }
+.lfi-orange { background: #C42230; }
+.lfi-green  { background: #8B1A23; }
 
 .landing-feature-title { font-size: 14px; font-weight: 700; color: var(--navy); }
 .landing-feature-desc  { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
@@ -1261,7 +1438,7 @@ body {
 
 .plan-selected-mark {
   position: absolute;
-  top: 12px;
+  bottom: 12px;
   right: 12px;
   background: var(--primary);
   color: #fff;

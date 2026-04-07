@@ -363,6 +363,48 @@ app.post('/api/create-checkout-session', upload.none(), async (req, res) => {
   }
 });
 
+// ─── AI詳細診断 決済セッション作成（¥500） ──────────────────────────────────────
+app.post('/api/create-ai-checkout-session', upload.none(), async (req, res) => {
+  try {
+    const { name, email, structure, floors } = req.body;
+    if (!name || !email) {
+      return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
+    }
+
+    const origin = process.env.NODE_ENV === 'production'
+      ? `https://${req.get('host')}`
+      : `http://${req.get('host')}`;
+
+    if (MOCK_STRIPE) {
+      return res.json({ url: `${origin}/?payment=ai-success` });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      line_items: [{
+        price_data: {
+          currency: 'jpy',
+          product_data: {
+            name: 'AI詳細診断',
+            description: '優先度付き問題点リスト・生活ストレス予測・具体的改善策',
+          },
+          unit_amount: 500,
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      customer_email: email,
+      metadata: { name, email, structure: structure || '', floors: floors || '' },
+      success_url: `${origin}/?payment=ai-success`,
+      cancel_url:  `${origin}/?payment=cancel`,
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('AI Stripe checkout error:', err);
+    res.status(500).json({ error: '決済の準備中にエラーが発生しました。再度お試しください。' });
+  }
+});
+
 // ─── 建築士相談エンドポイント ──────────────────────────────────────────────────
 app.post('/api/consult', upload.array('files', 10), async (req, res) => {
   try {

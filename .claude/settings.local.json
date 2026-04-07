@@ -9,7 +9,13 @@
       "Bash(python generate_template_pdf.py)",
       "Bash(python \"C:/Users/saito/OneDrive/H-One_家づくりの不安をワンタップで可視化/generate_template_pdf.py\")",
       "Skill(update-config)",
-      "Skill(update-config:*)"
+      "Skill(update-config:*)",
+      "Bash(python3 -c \"import ezdxf; print\\(ezdxf.__version__\\)\")",
+      "Bash(pip install:*)",
+      "Bash(cmd /c \"python --version\")",
+      "Bash(python generate_entourage.py)",
+      "Bash(python -c \"import ezdxf; print\\(ezdxf.__version__\\)\")",
+      "Bash(cmd /c \"python -c \"\"import ezdxf; print\\(ezdxf.__version__\\)\"\"\")"
     ]
   },
   "hooks": {

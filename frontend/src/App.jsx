@@ -127,6 +127,59 @@ function getGrade(score) {
 
 function isPDF(file) { return file?.type === 'application/pdf' }
 
+// ─── スクリーンショット保存 ────────────────────────────────────────────────────
+function loadHtml2Canvas() {
+  return new Promise((resolve, reject) => {
+    if (window.html2canvas) { resolve(window.html2canvas); return }
+    const s = document.createElement('script')
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'
+    s.onload  = () => resolve(window.html2canvas)
+    s.onerror = reject
+    document.head.appendChild(s)
+  })
+}
+
+async function saveScreenshot(targetRef, filename = 'archi-ai-result.png') {
+  const html2canvas = await loadHtml2Canvas()
+  const canvas = await html2canvas(targetRef, {
+    scale: 2,
+    useCORS: true,
+    backgroundColor: '#F4F2F2',
+    ignoreElements: el => el.classList?.contains('screenshot-hide'),
+  })
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/png'))
+  // モバイル：Web Share APIで共有（カメラロールに保存可能）
+  if (navigator.canShare?.({ files: [new File([blob], filename, { type: 'image/png' })] })) {
+    await navigator.share({ files: [new File([blob], filename, { type: 'image/png' })] })
+  } else {
+    // デスクトップ：ダウンロード
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+}
+
+function validateFile(file) {
+  return new Promise((resolve) => {
+    if (isPDF(file)) {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const bytes = new Uint8Array(e.target.result)
+        resolve(String.fromCharCode(...bytes) === '%PDF-')
+      }
+      reader.onerror = () => resolve(false)
+      reader.readAsArrayBuffer(file.slice(0, 5))
+    } else {
+      const url = URL.createObjectURL(file)
+      const img = new Image()
+      img.onload = () => { URL.revokeObjectURL(url); resolve(true) }
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(false) }
+      img.src = url
+    }
+  })
+}
+
 // ─── 共通UIパーツ ──────────────────────────────────────────────────────────────
 
 function ScoreCircle({ score }) {
@@ -221,13 +274,15 @@ function FileSlot({ label, required, file, onChange }) {
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  const handleChange = (e) => {
+  const handleChange = async (e) => {
     const f = e.target.files[0]
     if (!f) return
     const type = resolveFileType(f)
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
     if (!allowed.includes(type)) { alert('JPG・PNG・WebP・PDF形式のみ対応しています'); return }
     if (f.size > 20 * 1024 * 1024) { alert('ファイルサイズは20MB以下にしてください'); return }
+    const ok = await validateFile(f)
+    if (!ok) { alert('このファイルは読み取れませんでした。別のファイルをお試しください。'); if (inputRef.current) inputRef.current.value = ''; return }
     onChange(f)
   }
 
@@ -281,14 +336,28 @@ export default function App() {
   const [loadingMsg, setLoadingMsg]       = useState(LOADING_MESSAGES[0])
   const [loadingPct, setLoadingPct]       = useState(0)
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null)
-  const [splash, setSplash]               = useState('in') // 'in' | 'out' | 'done'
+  // 初回訪問のみスプラッシュ表示
+  const isFirstVisit = !sessionStorage.getItem('archi_splash_shown')
+  if (isFirstVisit) sessionStorage.setItem('archi_splash_shown', '1')
+  const [splash, setSplash]               = useState(isFirstVisit ? 'in' : 'done') // 'in'|'fly'|'out'|'done'
   const [consentModal, setConsentModal]   = useState(null) // { plan, action } | null
+  const headerLogoRef                     = useRef(null)
 
-  // スプラッシュ：フェードイン→表示→フェードアウト
+  // スプラッシュ：フェードイン→ヘッダーへ飛ぶ→フェードアウト（初回のみ）
   useEffect(() => {
-    const t1 = setTimeout(() => setSplash('out'),  2500) // 2.5秒後にフェードアウト開始
-    const t2 = setTimeout(() => setSplash('done'), 4000) // 4秒後に完全非表示
-    return () => { clearTimeout(t1); clearTimeout(t2) }
+    if (splash === 'done') return
+    const t1 = setTimeout(() => {
+      // ヘッダーロゴの中心座標を取得してCSS変数にセット
+      if (headerLogoRef.current) {
+        const r = headerLogoRef.current.getBoundingClientRect()
+        document.documentElement.style.setProperty('--splash-fly-top',  (r.top  + r.height / 2) + 'px')
+        document.documentElement.style.setProperty('--splash-fly-left', (r.left + r.width  / 2) + 'px')
+      }
+      setSplash('fly')
+    }, 2000)
+    const t2 = setTimeout(() => setSplash('out'),  2750)
+    const t3 = setTimeout(() => setSplash('done'), 3350)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
   }, [])
 
   // reCAPTCHA 初期化（キーが設定されている場合のみ）
@@ -308,6 +377,9 @@ export default function App() {
     const params = new URLSearchParams(window.location.search)
     if (params.get('payment') === 'success') {
       setScreen('payment-success')
+      window.history.replaceState({}, '', '/')
+    } else if (params.get('payment') === 'ai-success') {
+      setScreen('ai-payment-success')
       window.history.replaceState({}, '', '/')
     } else if (params.get('payment') === 'cancel') {
       setScreen('consult')
@@ -389,6 +461,18 @@ export default function App() {
     } catch (err) { setError(err.message); setScreen('results') }
   }
 
+  const handleAiPaySubmit = async (form) => {
+    const fd = new FormData()
+    fd.append('name', form.name)
+    fd.append('email', form.email)
+    fd.append('structure', basicInfo.structure || '')
+    fd.append('floors',    basicInfo.floors    || '')
+    const res = await fetch('/api/create-ai-checkout-session', { method: 'POST', body: fd })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    window.location.href = data.url
+  }
+
   const handleConsultSubmit = async (form) => {
     const fd = new FormData()
     fd.append('name', form.name)
@@ -426,7 +510,7 @@ export default function App() {
     <div className="app">
       {splash !== 'done' && (
         <div className={`splash-overlay splash-${splash}`}>
-          <div className="splash-logo">
+          <div className={`splash-logo${splash === 'fly' || splash === 'out' ? ' splash-logo-fly' : ''}`}>
             <LogoMark size={120} />
           </div>
         </div>
@@ -441,7 +525,9 @@ export default function App() {
         )}
         <header className="app-header">
           <div className="logo">
-            <LogoMark />
+            <div ref={headerLogoRef} style={{ visibility: splash !== 'done' ? 'hidden' : 'visible' }}>
+              <LogoMark />
+            </div>
             <div className="logo-info">
               <span className="logo-title">Archi AI</span>
               <span className="logo-sub">家づくりの不安をワンタップで可視化</span>
@@ -457,12 +543,14 @@ export default function App() {
           {screen === 'check'          && <CheckScreen checklist={checklist} onChange={setChecklist} onNext={() => { setError(null); setScreen('preview') }} onBack={() => setScreen('upload')} />}
           {screen === 'preview'        && <PreviewScreen files={files} primaryFile={primaryFile} selectedPlan={selectedPlan} onDiagnose={handleDiagnose} onBack={() => setScreen('upload')} error={error} />}
           {screen === 'loading'        && <LoadingScreen message={loadingMsg} pct={loadingPct} title="AIが診断中..." />}
-          {screen === 'results'        && diagnosis && <ResultsScreen diagnosis={diagnosis} basicInfo={basicInfo} onReset={handleReset} onDetailDiagnose={() => withConsent('ai', handleDetailDiagnose)} onConsult={() => withConsent('architect', () => setScreen('consult'))} error={error} />}
+          {screen === 'results'        && diagnosis && <ResultsScreen diagnosis={diagnosis} basicInfo={basicInfo} onReset={handleReset} onDetailDiagnose={() => setScreen('ai-pay')} onConsult={() => withConsent('architect', () => setScreen('consult'))} error={error} />}
           {screen === 'detail-loading' && <LoadingScreen message={loadingMsg} pct={loadingPct} title="詳細分析中..." />}
           {screen === 'detail'         && detailDiagnosis && <DetailScreen detail={detailDiagnosis} freeDiagnosis={diagnosis} onBack={() => setScreen(diagnosis ? 'results' : 'upload')} onReset={handleReset} onConsult={() => withConsent('architect', () => setScreen('consult'))} />}
+          {screen === 'ai-pay'         && <AiPayScreen onSubmit={handleAiPaySubmit} onBack={() => setScreen('results')} basicInfo={basicInfo} />}
           {screen === 'consult'        && <ConsultScreen onSubmit={handleConsultSubmit} onBack={backFromConsult} selectedPlan={selectedPlan} basicInfo={basicInfo} primaryFile={primaryFile} />}
           {screen === 'consult-done'   && consultResult && <ConsultDoneScreen result={consultResult} onReset={handleReset} />}
           {screen === 'payment-success' && <PaymentSuccessScreen onReset={handleReset} />}
+          {screen === 'ai-payment-success' && <AiPaymentSuccessScreen onReset={handleReset} />}
         </main>
       </div>
     </div>
@@ -477,8 +565,8 @@ const CONSENT_NOTICES = {
     'AIによる診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。',
   ],
   architect: [
-    'AIによる診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。',
     '本相談は設計業務ではありません。診断・アドバイスの内容に設計上の責任は負いかねます。',
+    '3営業日以内に一級建築士よりメールにてご連絡します。',
   ],
 }
 
@@ -514,7 +602,7 @@ function PaymentSuccessScreen({ onReset }) {
         <div className="done-card">
           <p className="done-message">3営業日以内にご登録のメールアドレスへご連絡いたします。</p>
           <p className="done-message" style={{marginTop:'8px',fontSize:'13px',color:'#787878'}}>
-            間取り図ファイルの送付方法はご連絡メールにてご案内します。
+            相談後の添削資料はご登録のメールアドレスへお送りします。
           </p>
         </div>
         <div className="done-notice">
@@ -655,14 +743,18 @@ function UploadScreen({ files, onFileChange, floors, error, onNext, onBack, sele
           file={files[slot.key] || null} onChange={f => onFileChange(slot.key, f)} />
       ))}
 
-      <div className="upload-section-title" style={{ marginTop: 20 }}>
-        <span className="upload-section-label">追加資料</span>
-        <span className="upload-section-note">任意</span>
-      </div>
-      {extraSlots.map(slot => (
-        <FileSlot key={slot.key} label={slot.label} required={slot.required}
-          file={files[slot.key] || null} onChange={f => onFileChange(slot.key, f)} />
-      ))}
+      {selectedPlan !== 'free' && (
+        <>
+          <div className="upload-section-title" style={{ marginTop: 20 }}>
+            <span className="upload-section-label">追加資料</span>
+            <span className="upload-section-note">任意</span>
+          </div>
+          {extraSlots.map(slot => (
+            <FileSlot key={slot.key} label={slot.label} required={slot.required}
+              file={files[slot.key] || null} onChange={f => onFileChange(slot.key, f)} />
+          ))}
+        </>
+      )}
 
       <p className="upload-format-note">JPG · PNG · WebP · PDF ／ 1ファイル最大20MB</p>
       {error && <div className="error-box">{error}</div>}
@@ -757,9 +849,19 @@ function LoadingScreen({ message, pct, title }) {
 function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onConsult, error }) {
   const { total, scores, good_points, issues, suggestions, overall_comment } = diagnosis
   const grade = getGrade(total)
+  const screenRef = useRef(null)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    if (!screenRef.current) return
+    setSaving(true)
+    try { await saveScreenshot(screenRef.current, 'archi-ai-診断結果.png') }
+    catch (e) { if (e?.name !== 'AbortError') alert('保存に失敗しました。再度お試しください。') }
+    finally { setSaving(false) }
+  }
 
   return (
-    <div className="screen">
+    <div className="screen" ref={screenRef}>
       <div className="score-hero" style={{ borderTopColor: grade.color }}>
         <p className="score-hero-label">総合スコア（無料診断）</p>
         <ScoreCircle score={total} />
@@ -842,7 +944,10 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         </div>
         <p className="premium-note">※ 設計責任は負いません。あくまで参考意見としてご活用ください。</p>
       </div>
-      <button className="btn-ghost" onClick={onReset}>最初からやり直す</button>
+      <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
+        {saving ? '保存中...' : '📷 診断結果を画像で保存'}
+      </button>
+      <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
   )
 }
@@ -851,8 +956,19 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
 
 function DetailScreen({ detail, freeDiagnosis, onBack, onReset, onConsult }) {
   const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict } = detail
+  const screenRef = useRef(null)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    if (!screenRef.current) return
+    setSaving(true)
+    try { await saveScreenshot(screenRef.current, 'archi-ai-詳細診断.png') }
+    catch (e) { if (e?.name !== 'AbortError') alert('保存に失敗しました。再度お試しください。') }
+    finally { setSaving(false) }
+  }
+
   return (
-    <div className="screen">
+    <div className="screen" ref={screenRef}>
       <div className="detail-hero">
         <div className="detail-badge">AI詳細診断レポート</div>
         <h2 className="detail-title">あなたの間取りの<br />本当のリスク</h2>
@@ -938,8 +1054,11 @@ function DetailScreen({ detail, freeDiagnosis, onBack, onReset, onConsult }) {
         <p className="premium-note">※ 設計責任は負いません。あくまで参考意見としてご活用ください。</p>
       </div>
 
-      <button className="btn-ghost" onClick={onBack}>無料診断結果に戻る</button>
-      <button className="btn-ghost" onClick={onReset}>最初からやり直す</button>
+      <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
+        {saving ? '保存中...' : '📷 診断結果を画像で保存'}
+      </button>
+      <button className="btn-ghost screenshot-hide" onClick={onBack}>無料診断結果に戻る</button>
+      <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
   )
 }
@@ -998,10 +1117,86 @@ function ConsultScreen({ onSubmit, onBack, selectedPlan, basicInfo, primaryFile 
         <div className="form-note-box"><p>アップロード済みのファイルが自動的に添付されます。</p></div>
         {error && <div className="error-box">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading}>
-          {loading ? '決済ページへ移動中...' : 'カードで支払う（¥3,000）'}
+          {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥3,000）'}
         </button>
       </form>
       <button className="btn-ghost" onClick={onBack}>戻る</button>
+    </div>
+  )
+}
+
+// ─── AI詳細診断 支払い画面 ────────────────────────────────────────────────────
+
+function AiPayScreen({ onSubmit, onBack, basicInfo }) {
+  const [form, setForm]       = useState({ name: '', email: '' })
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState(null)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!form.name.trim() || !form.email.trim()) { setError('お名前とメールアドレスを入力してください'); return }
+    setLoading(true); setError(null)
+    try { await onSubmit(form) } catch (err) { setError(err.message); setLoading(false) }
+  }
+
+  return (
+    <div className="screen">
+      <div className="consult-hero">
+        <div className="detail-badge">AIによる詳細分析レポート</div>
+        <h2 className="detail-title">問題点を深掘り、<br />改善策まで提案</h2>
+        <p className="consult-sub">優先順位付きの問題リストと、生活ストレス予測・具体的改善策をレポートします。</p>
+      </div>
+
+      <div className="consult-info-card">
+        <p className="consult-info-title">サービス内容</p>
+        {['無料診断の全項目','優先度付き問題点リスト（最大5件）','「住んでから気づく」生活ストレス予測','コスト感付きの具体的改善策'].map((t,i)=>(
+          <div key={i} className="consult-info-row"><span className="consult-info-icon">✓</span><span>{t}</span></div>
+        ))}
+        <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥500（税込）</span></div>
+        {basicInfo.structure && (
+          <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</span></div>
+        )}
+        <p className="consult-disclaimer">※ AIによる診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。</p>
+      </div>
+
+      <form className="consult-form" onSubmit={handleSubmit} noValidate>
+        <h3 className="form-title">お申し込み情報</h3>
+        <div className="form-field">
+          <label className="form-label" htmlFor="ai-name">お名前 <span className="form-required">必須</span></label>
+          <input id="ai-name" name="name" type="text" className="form-input" placeholder="山田 太郎" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} />
+        </div>
+        <div className="form-field">
+          <label className="form-label" htmlFor="ai-email">メールアドレス <span className="form-required">必須</span></label>
+          <input id="ai-email" name="email" type="email" className="form-input" placeholder="example@email.com" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} />
+        </div>
+        {error && <div className="error-box">{error}</div>}
+        <button className="btn-primary" type="submit" disabled={loading}>
+          {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥500）'}
+        </button>
+      </form>
+      <button className="btn-ghost" onClick={onBack}>戻る</button>
+    </div>
+  )
+}
+
+function AiPaymentSuccessScreen({ onReset }) {
+  return (
+    <div className="screen screen-center">
+      <div className="done-wrap">
+        <div className="done-icon">✓</div>
+        <h2 className="done-title">お支払い完了</h2>
+        <p className="done-sub">AI詳細診断のお申し込みを受け付けました。</p>
+        <div className="done-card">
+          <p className="done-message">診断結果はご登録のメールアドレスへお送りします。</p>
+          <p className="done-message" style={{marginTop:'8px',fontSize:'13px',color:'#787878'}}>
+            相談後の添削資料はご登録のメールアドレスへお送りします。
+          </p>
+        </div>
+        <div className="done-notice">
+          <p>AIによる診断のため、必ずしも正確とは限りません。参考情報としてご活用ください</p>
+        </div>
+        <button className="btn-primary" onClick={onReset}>トップに戻る</button>
+      </div>
     </div>
   )
 }
