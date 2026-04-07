@@ -336,28 +336,14 @@ export default function App() {
   const [loadingMsg, setLoadingMsg]       = useState(LOADING_MESSAGES[0])
   const [loadingPct, setLoadingPct]       = useState(0)
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null)
-  // 初回訪問のみスプラッシュ表示
-  const isFirstVisit = !sessionStorage.getItem('archi_splash_shown')
-  if (isFirstVisit) sessionStorage.setItem('archi_splash_shown', '1')
-  const [splash, setSplash]               = useState(isFirstVisit ? 'in' : 'done') // 'in'|'fly'|'out'|'done'
+  const [splash, setSplash]               = useState('in') // 'in' | 'out' | 'done'
   const [consentModal, setConsentModal]   = useState(null) // { plan, action } | null
-  const headerLogoRef                     = useRef(null)
 
-  // スプラッシュ：フェードイン→ヘッダーへ飛ぶ→フェードアウト（初回のみ）
+  // スプラッシュ：フェードイン→表示→フェードアウト
   useEffect(() => {
-    if (splash === 'done') return
-    const t1 = setTimeout(() => {
-      // ヘッダーロゴの中心座標を取得してCSS変数にセット
-      if (headerLogoRef.current) {
-        const r = headerLogoRef.current.getBoundingClientRect()
-        document.documentElement.style.setProperty('--splash-fly-top',  (r.top  + r.height / 2) + 'px')
-        document.documentElement.style.setProperty('--splash-fly-left', (r.left + r.width  / 2) + 'px')
-      }
-      setSplash('fly')
-    }, 2000)
-    const t2 = setTimeout(() => setSplash('out'),  2750)
-    const t3 = setTimeout(() => setSplash('done'), 3350)
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+    const t1 = setTimeout(() => setSplash('out'),  2500)
+    const t2 = setTimeout(() => setSplash('done'), 4000)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
 
   // reCAPTCHA 初期化（キーが設定されている場合のみ）
@@ -510,7 +496,7 @@ export default function App() {
     <div className="app">
       {splash !== 'done' && (
         <div className={`splash-overlay splash-${splash}`}>
-          <div className={`splash-logo${splash === 'fly' || splash === 'out' ? ' splash-logo-fly' : ''}`}>
+          <div className="splash-logo">
             <LogoMark size={120} />
           </div>
         </div>
@@ -525,9 +511,7 @@ export default function App() {
         )}
         <header className="app-header">
           <div className="logo">
-            <div ref={headerLogoRef} style={{ visibility: splash !== 'done' ? 'hidden' : 'visible' }}>
-              <LogoMark />
-            </div>
+            <LogoMark />
             <div className="logo-info">
               <span className="logo-title">Archi AI</span>
               <span className="logo-sub">家づくりの不安をワンタップで可視化</span>

@@ -43,52 +43,31 @@ body {
 }
 
 /* ─── スプラッシュ ───────────────────────────────────────────────────────────── */
-:root {
-  --splash-fly-top:  30px;
-  --splash-fly-left: 44px;
-}
-
 .splash-overlay {
   position: fixed;
   inset: 0;
   background: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 9999;
 }
 .splash-in  { opacity: 1; }
-.splash-fly { opacity: 1; }
-.splash-out { opacity: 0; transition: opacity 0.55s ease; }
+.splash-out { opacity: 0; transition: opacity 0.8s ease; }
 
-/* ロゴ：中央に絶対配置 */
+/* ロゴだけをフェードイン */
 .splash-logo {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) scale(1);
-  animation: splashLogoIn 1.0s ease forwards;
-  /* fly時のトランジション */
-  transition:
-    top  0.65s cubic-bezier(0.4, 0, 0.2, 1),
-    left 0.65s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: splashLogoIn 1.2s ease forwards;
 }
-
 @keyframes splashLogoIn {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(0.82); }
-  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-}
-
-/* ヘッダーロゴへ飛ぶ（55/120 ≈ 0.458） */
-.splash-logo-fly {
-  top:  var(--splash-fly-top);
-  left: var(--splash-fly-left);
-  transform: translate(-50%, -50%) scale(0.458);
-  animation: none;
+  from { opacity: 0; transform: scale(0.88); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 /* メインコンテンツ：スプラッシュ中は非表示→フェードイン */
 .app-content {
   opacity: 0;
-  transition: opacity 0.7s ease;
+  transition: opacity 0.8s ease;
 }
 .app-content--visible {
   opacity: 1;
