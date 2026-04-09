@@ -62,11 +62,11 @@ const COST_COLORS = {
   '設計変更必要': { bg: '#FEE2E2', color: '#991B1B' },
 }
 
-const STRUCTURE_OPTIONS = ['木造', '鉄骨造', 'RC造', 'わからない']
+const STRUCTURE_OPTIONS = ['木造', '鉄骨造', '鉄筋コンクリート造', 'わからない']
 const FLOOR_OPTIONS     = ['平屋', '2階建て', '3階建て以上']
 const FAMILY_OPTIONS    = ['1人', '2人', '3人', '4人', '5人以上']
 const AGE_OPTIONS       = ['20代', '30代', '40代', '50代', '60代以上']
-const BUDGET_OPTIONS    = ['〜2,000万円', '2,000〜3,000万円', '3,000〜4,000万円', '4,000万円以上']
+const BUDGET_OPTIONS    = ['〜2,000万', '2,000万〜3,000万', '3,000万〜4,000万', '5,000万〜6,000万', '6,000万〜8,000万', '8,000万以上']
 
 const CHECK_ITEMS = [
   { key: 'direction', label: '方位（北の向き）が記載されている',         note: '採光・日当たりの判定に使用します',            required: true  },
@@ -148,11 +148,9 @@ async function saveScreenshot(targetRef, filename = 'archi-ai-result.png') {
     ignoreElements: el => el.classList?.contains('screenshot-hide'),
   })
   const blob = await new Promise(r => canvas.toBlob(r, 'image/png'))
-  // モバイル：Web Share APIで共有（カメラロールに保存可能）
   if (navigator.canShare?.({ files: [new File([blob], filename, { type: 'image/png' })] })) {
     await navigator.share({ files: [new File([blob], filename, { type: 'image/png' })] })
   } else {
-    // デスクトップ：ダウンロード
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = filename; a.click()
@@ -228,9 +226,9 @@ function ScoreBar({ score, label, desc, delay }) {
   )
 }
 
-function PillSelect({ options, value, onChange }) {
+function PillSelect({ options, value, onChange, row, cols3 }) {
   return (
-    <div className="pill-group">
+    <div className={`pill-group${row ? ' pill-group--row' : ''}${cols3 ? ' pill-group--cols3' : ''}`}>
       {options.map(opt => (
         <button key={opt} type="button"
           className={`pill${value === opt ? ' pill-active' : ''}`}
@@ -256,7 +254,6 @@ function LogoMark({ size = 55 }) {
 
 // ─── ファイルスロット ──────────────────────────────────────────────────────────
 
-// iOSではf.typeが空の場合があるため拡張子でもチェック
 function resolveFileType(f) {
   if (f.type) return f.type
   const ext = f.name.split('.').pop().toLowerCase()
@@ -311,7 +308,6 @@ function FileSlot({ label, required, file, onChange }) {
             <span className="file-slot-hint">JPG · PNG · PDF</span>
           </div>
         )}
-        {/* iOSのためdisplay:noneを避けopacity/sizeで隠す */}
         <input ref={inputRef} type="file"
           accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
           onChange={handleChange}
@@ -321,32 +317,61 @@ function FileSlot({ label, required, file, onChange }) {
   )
 }
 
+// ─── セクションヘッダー ────────────────────────────────────────────────────────
+
+function SectionDivider({ label }) {
+  return (
+    <div className="section-divider">
+      <span className="section-divider-label">{label}</span>
+    </div>
+  )
+}
+
+// ─── 戻るボタン（アンカースクロール） ─────────────────────────────────────────
+
+function BackButton({ targetId, label = '戻る' }) {
+  const handleBack = () => {
+    document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  return <button className="btn-ghost" onClick={handleBack}>{label}</button>
+}
+
 // ─── メインApp ─────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [screen, setScreen]               = useState('landing')
-  const [basicInfo, setBasicInfo]         = useState({ structure: '', floors: '', familySize: '', ageGroup: '', budget: '' })
-  const [selectedPlan, setSelectedPlan]   = useState(null)
-  const [files, setFiles]                 = useState({})   // { floor0: File, floor1: File, elevation: File, ... }
-  const [diagnosis, setDiagnosis]         = useState(null)
+  // セクション表示管理
+  const [revealed, setRevealed]               = useState(['landing'])
+  // フォームデータ
+  const [basicInfo, setBasicInfo]             = useState({ structure: '', floors: '', familySize: '', ageGroup: '', budget: '' })
+  const [selectedPlan, setSelectedPlan]       = useState(null)
+  const [files, setFiles]                     = useState({})
+  const [checklist, setChecklist]             = useState({})
+  // 診断結果
+  const [diagnosis, setDiagnosis]             = useState(null)
   const [detailDiagnosis, setDetailDiagnosis] = useState(null)
-  const [consultResult, setConsultResult] = useState(null)
-  const [error, setError]                 = useState(null)
-  const [checklist, setChecklist]         = useState({})
-  const [loadingMsg, setLoadingMsg]       = useState(LOADING_MESSAGES[0])
-  const [loadingPct, setLoadingPct]       = useState(0)
+  // ローディング
+  const [isLoading, setIsLoading]             = useState(false)
+  const [isDetailLoading, setIsDetailLoading] = useState(false)
+  const [loadingMsg, setLoadingMsg]           = useState(LOADING_MESSAGES[0])
+  const [loadingPct, setLoadingPct]           = useState(0)
+  // その他
+  const [error, setError]                     = useState(null)
+  const [splash, setSplash]                   = useState('in')
+  const [consentModal, setConsentModal]       = useState(null)
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null)
-  const [splash, setSplash]               = useState('in') // 'in' | 'out' | 'done'
-  const [consentModal, setConsentModal]   = useState(null) // { plan, action } | null
+  // 決済完了（Stripeリダイレクト後）
+  const [paymentDone, setPaymentDone]         = useState(null) // 'architect' | 'ai' | null
 
-  // スプラッシュ：フェードイン→表示→フェードアウト
+  // スプラッシュ＋スクロール復元防止
   useEffect(() => {
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
+    window.scrollTo(0, 0)
     const t1 = setTimeout(() => setSplash('out'),  2500)
     const t2 = setTimeout(() => setSplash('done'), 4000)
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
 
-  // reCAPTCHA 初期化（キーが設定されている場合のみ）
+  // reCAPTCHA 初期化
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(d => {
       if (d.recaptchaSiteKey) {
@@ -358,25 +383,22 @@ export default function App() {
     }).catch(() => {})
   }, [])
 
-  // 決済完了後のリダイレクト検出
+  // 決済完了リダイレクト検出
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('payment') === 'success') {
-      setScreen('payment-success')
+      setPaymentDone('architect')
       window.history.replaceState({}, '', '/')
     } else if (params.get('payment') === 'ai-success') {
-      setScreen('ai-payment-success')
-      window.history.replaceState({}, '', '/')
-    } else if (params.get('payment') === 'cancel') {
-      setScreen('consult')
+      setPaymentDone('ai')
       window.history.replaceState({}, '', '/')
     }
   }, [])
 
   // ローディングメッセージ
   useEffect(() => {
-    const msgs = screen === 'detail-loading' ? DETAIL_LOADING_MESSAGES : LOADING_MESSAGES
-    if (screen !== 'loading' && screen !== 'detail-loading') return
+    if (!isLoading && !isDetailLoading) return
+    const msgs = isDetailLoading ? DETAIL_LOADING_MESSAGES : LOADING_MESSAGES
     let i = 0
     const iv = setInterval(() => {
       i = (i + 1) % msgs.length
@@ -384,7 +406,30 @@ export default function App() {
       setLoadingPct(Math.round(((i + 1) / msgs.length) * 90))
     }, 1400)
     return () => clearInterval(iv)
-  }, [screen])
+  }, [isLoading, isDetailLoading])
+
+  // ─── スクロールナビゲーション ─────────────────────────────────────────────────
+
+  const scrollTo = (id) => {
+    setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 80)
+  }
+
+  // 次のセクションを表示してスクロール（以降のセクションはリセット）
+  const goTo = (fromId, toId, onReset) => {
+    setRevealed(prev => {
+      const fromIdx = prev.indexOf(fromId)
+      const trimmed = fromIdx >= 0 ? prev.slice(0, fromIdx + 1) : prev
+      return trimmed.includes(toId) ? trimmed : [...trimmed, toId]
+    })
+    if (onReset) onReset()
+    scrollTo(toId)
+  }
+
+  const has = (id) => revealed.includes(id)
+
+  // ─── ハンドラー ───────────────────────────────────────────────────────────────
 
   const handleFileChange = (key, file) => setFiles(prev => ({ ...prev, [key]: file }))
 
@@ -395,56 +440,51 @@ export default function App() {
     return fd
   }
 
-  // 最初の画像ファイル（プレビュー表示用）
+  const hasRequiredFile = !!files['floor0']
   const primaryFile = Object.values(files).find(f => f && !isPDF(f)) || null
 
-  // 必須ファイルが1枚以上あるか
-  const hasRequiredFile = !!files['floor0']
-
   const handleDiagnose = async () => {
-    if (selectedPlan === 'architect') { setError(null); setScreen('consult'); return }
-
-    // ① 無料診断：1日1回制限チェック
+    // 建築士プランは直接相談フォームへ
+    if (selectedPlan === 'architect') {
+      goTo('preview', 'consult')
+      return
+    }
+    // 無料診断：1日1回制限チェック
     if (selectedPlan === 'free' && !checkDailyLimit()) {
       setError('本日の無料診断は上限に達しました。明日またお試しください。')
       return
     }
 
     const isDetail = selectedPlan === 'ai'
-    setScreen(isDetail ? 'detail-loading' : 'loading')
+    setError(null)
+    setDiagnosis(null)
+    setDetailDiagnosis(null)
+    setIsLoading(!isDetail)
+    setIsDetailLoading(isDetail)
     setLoadingMsg(isDetail ? DETAIL_LOADING_MESSAGES[0] : LOADING_MESSAGES[0])
     setLoadingPct(5)
+    goTo('preview', 'results')
+
     try {
-      // ② reCAPTCHA トークン取得
       const token = await getRecaptchaToken(recaptchaSiteKey, 'diagnose')
       const fd = buildFormData()
       if (token) fd.append('recaptchaToken', token)
-
       const res = await fetch(isDetail ? '/api/diagnose/detail' : '/api/diagnose', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
-
-      // ③ 成功時：無料診断の利用を記録
       if (selectedPlan === 'free') recordUsage()
-
       setLoadingPct(100)
       setTimeout(() => {
-        if (isDetail) { setDetailDiagnosis(data); setScreen('detail') }
-        else { setDiagnosis(data); setScreen('results') }
+        if (isDetail) setDetailDiagnosis(data)
+        else setDiagnosis(data)
+        setIsLoading(false)
+        setIsDetailLoading(false)
       }, 400)
-    } catch (err) { setError(err.message); setScreen('preview') }
-  }
-
-  const handleDetailDiagnose = async () => {
-    setScreen('detail-loading')
-    setLoadingMsg(DETAIL_LOADING_MESSAGES[0]); setLoadingPct(5)
-    try {
-      const res = await fetch('/api/diagnose/detail', { method: 'POST', body: buildFormData() })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
-      setLoadingPct(100)
-      setTimeout(() => { setDetailDiagnosis(data); setScreen('detail') }, 400)
-    } catch (err) { setError(err.message); setScreen('results') }
+    } catch (err) {
+      setError(err.message)
+      setIsLoading(false)
+      setIsDetailLoading(false)
+    }
   }
 
   const handleAiPaySubmit = async (form) => {
@@ -471,34 +511,65 @@ export default function App() {
     const res = await fetch('/api/create-checkout-session', { method: 'POST', body: fd })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error)
-    // Stripeの決済ページへリダイレクト
     window.location.href = data.url
   }
 
   const handleReset = () => {
-    setScreen('landing')
+    setRevealed(['landing'])
     setBasicInfo({ structure: '', floors: '', familySize: '', ageGroup: '', budget: '' })
     setSelectedPlan(null); setFiles({}); setChecklist({})
-    setDiagnosis(null); setDetailDiagnosis(null); setConsultResult(null); setError(null)
+    setDiagnosis(null); setDetailDiagnosis(null)
+    setError(null); setIsLoading(false); setIsDetailLoading(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  // 有料プランへの遷移前に同意モーダルを挟む
   const withConsent = (plan, action) => setConsentModal({ plan, action })
 
-  const backFromConsult = () => {
-    if (selectedPlan === 'architect') setScreen('preview')
-    else if (detailDiagnosis) setScreen('detail')
-    else if (diagnosis) setScreen('results')
-    else setScreen('upload')
+  // 決済完了ページ（Stripeリダイレクト後）
+  if (paymentDone) {
+    return (
+      <div className="app">
+        <header className="app-header">
+          <div className="logo">
+            <LogoMark />
+            <div className="logo-info">
+              <span className="logo-title">Archi AI</span>
+              <span className="logo-sub">家づくりの不安をワンタップで可視化</span>
+            </div>
+          </div>
+        </header>
+        <main className="app-main">
+          <div className="screen screen-center">
+            <div className="done-wrap">
+              <div className="done-icon">✓</div>
+              <h2 className="done-title">お支払い完了</h2>
+              <p className="done-sub">{paymentDone === 'ai' ? 'AI詳細診断のお申し込みを受け付けました。' : 'ご相談を受け付けました。'}</p>
+              <div className="done-card">
+                <p className="done-message">
+                  {paymentDone === 'ai'
+                    ? '診断結果はご登録のメールアドレスへお送りします。'
+                    : '3営業日以内にご登録のメールアドレスへご連絡いたします。'}
+                </p>
+                <p className="done-message" style={{ marginTop: '8px', fontSize: '13px', color: '#787878' }}>
+                  相談後の添削資料はご登録のメールアドレスへお送りします。
+                </p>
+              </div>
+              <div className="done-notice">
+                <p>{paymentDone === 'ai' ? 'AIによる診断のため、必ずしも正確とは限りません。参考情報としてご活用ください' : '設計責任は負いません。参考意見としてご活用ください'}</p>
+              </div>
+              <button className="btn-primary" onClick={() => setPaymentDone(null)}>トップに戻る</button>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   return (
     <div className="app">
       {splash !== 'done' && (
         <div className={`splash-overlay splash-${splash}`}>
-          <div className="splash-logo">
-            <LogoMark size={120} />
-          </div>
+          <div className="splash-logo"><LogoMark size={120} /></div>
         </div>
       )}
       <div className={`app-content${splash !== 'in' ? ' app-content--visible' : ''}`}>
@@ -520,28 +591,141 @@ export default function App() {
         </header>
 
         <main className="app-main">
-          {screen === 'landing'        && <LandingScreen onStart={() => setScreen('basicInfo')} />}
-          {screen === 'basicInfo'      && <BasicInfoScreen basicInfo={basicInfo} onChange={setBasicInfo} onNext={() => setScreen('planSelect')} onBack={() => setScreen('landing')} />}
-          {screen === 'planSelect'     && <PlanSelectScreen selectedPlan={selectedPlan} onChange={setSelectedPlan} onNext={() => { setError(null); setScreen('upload') }} onBack={() => setScreen('basicInfo')} />}
-          {screen === 'upload'         && <UploadScreen files={files} onFileChange={handleFileChange} floors={basicInfo.floors} error={error} onNext={() => { setError(null); setScreen('check') }} onBack={() => setScreen('planSelect')} selectedPlan={selectedPlan} hasRequired={hasRequiredFile} />}
-          {screen === 'check'          && <CheckScreen checklist={checklist} onChange={setChecklist} onNext={() => { setError(null); setScreen('preview') }} onBack={() => setScreen('upload')} />}
-          {screen === 'preview'        && <PreviewScreen files={files} primaryFile={primaryFile} selectedPlan={selectedPlan} onDiagnose={handleDiagnose} onBack={() => setScreen('upload')} error={error} />}
-          {screen === 'loading'        && <LoadingScreen message={loadingMsg} pct={loadingPct} title="AIが診断中..." />}
-          {screen === 'results'        && diagnosis && <ResultsScreen diagnosis={diagnosis} basicInfo={basicInfo} onReset={handleReset} onDetailDiagnose={() => setScreen('ai-pay')} onConsult={() => withConsent('architect', () => setScreen('consult'))} error={error} />}
-          {screen === 'detail-loading' && <LoadingScreen message={loadingMsg} pct={loadingPct} title="詳細分析中..." />}
-          {screen === 'detail'         && detailDiagnosis && <DetailScreen detail={detailDiagnosis} freeDiagnosis={diagnosis} onBack={() => setScreen(diagnosis ? 'results' : 'upload')} onReset={handleReset} onConsult={() => withConsent('architect', () => setScreen('consult'))} />}
-          {screen === 'ai-pay'         && <AiPayScreen onSubmit={handleAiPaySubmit} onBack={() => setScreen('results')} basicInfo={basicInfo} />}
-          {screen === 'consult'        && <ConsultScreen onSubmit={handleConsultSubmit} onBack={backFromConsult} selectedPlan={selectedPlan} basicInfo={basicInfo} primaryFile={primaryFile} />}
-          {screen === 'consult-done'   && consultResult && <ConsultDoneScreen result={consultResult} onReset={handleReset} />}
-          {screen === 'payment-success' && <PaymentSuccessScreen onReset={handleReset} />}
-          {screen === 'ai-payment-success' && <AiPaymentSuccessScreen onReset={handleReset} />}
+
+          {/* ── ① ランディング ── */}
+          <section id="landing" className="app-section">
+            <LandingScreen onStart={() => goTo('landing', 'info')} />
+          </section>
+
+          {/* ── ② 基本情報 ── */}
+          {has('info') && (
+            <section id="info" className="app-section">
+              <SectionDivider label="STEP 1　建物の情報" />
+              <BasicInfoScreen
+                basicInfo={basicInfo}
+                onChange={setBasicInfo}
+                onNext={() => goTo('info', 'plan', () => { setSelectedPlan(null) })}
+                onBackId="landing"
+              />
+            </section>
+          )}
+
+          {/* ── ③ コース選択 ── */}
+          {has('plan') && (
+            <section id="plan" className="app-section">
+              <SectionDivider label="STEP 2　診断コースを選ぶ" />
+              <PlanSelectScreen
+                selectedPlan={selectedPlan}
+                onChange={setSelectedPlan}
+                onNext={() => goTo('plan', 'upload', () => { setFiles({}); setError(null) })}
+                onBackId="info"
+              />
+            </section>
+          )}
+
+          {/* ── ④ ファイルアップロード ── */}
+          {has('upload') && (
+            <section id="upload" className="app-section">
+              <SectionDivider label="STEP 3　間取り図をアップロード" />
+              <UploadScreen
+                files={files}
+                onFileChange={handleFileChange}
+                floors={basicInfo.floors}
+                error={error}
+                onNext={() => goTo('upload', 'preview', () => { setError(null); setChecklist({}) })}
+                onBackId="plan"
+                selectedPlan={selectedPlan}
+                hasRequired={hasRequiredFile}
+              />
+            </section>
+          )}
+
+          {/* ── ⑤ 確認・同意 ── */}
+          {has('preview') && (
+            <section id="preview" className="app-section">
+              <SectionDivider label="STEP 4　内容を確認して診断開始" />
+              <PreviewScreen
+                files={files}
+                primaryFile={primaryFile}
+                selectedPlan={selectedPlan}
+                onDiagnose={handleDiagnose}
+                onBackId="upload"
+                error={error}
+                checklist={checklist}
+                onChecklistChange={setChecklist}
+              />
+            </section>
+          )}
+
+          {/* ── ⑥ 診断結果（ローディング→結果） ── */}
+          {has('results') && (
+            <section id="results" className="app-section">
+              {(isLoading || isDetailLoading) ? (
+                <LoadingScreen
+                  message={loadingMsg}
+                  pct={loadingPct}
+                  title={isDetailLoading ? '詳細分析中...' : 'AIが診断中...'}
+                />
+              ) : error && !diagnosis && !detailDiagnosis ? (
+                <div className="screen">
+                  <div className="error-box">{error}</div>
+                  <BackButton targetId="preview" label="戻って再試行する" />
+                </div>
+              ) : detailDiagnosis ? (
+                <DetailScreen
+                  detail={detailDiagnosis}
+                  freeDiagnosis={diagnosis}
+                  onScreenRef={null}
+                  onReset={handleReset}
+                  onConsult={() => withConsent('architect', () => goTo('results', 'consult'))}
+                  onBackId="preview"
+                />
+              ) : diagnosis ? (
+                <ResultsScreen
+                  diagnosis={diagnosis}
+                  basicInfo={basicInfo}
+                  onReset={handleReset}
+                  onDetailDiagnose={() => goTo('results', 'ai-pay')}
+                  onConsult={() => withConsent('architect', () => goTo('results', 'consult'))}
+                  error={error}
+                />
+              ) : null}
+            </section>
+          )}
+
+          {/* ── ⑦ AI詳細診断 支払い（無料→AI upgrade） ── */}
+          {has('ai-pay') && (
+            <section id="ai-pay" className="app-section">
+              <SectionDivider label="AI詳細診断へアップグレード" />
+              <AiPayScreen
+                onSubmit={handleAiPaySubmit}
+                onBackId="results"
+                basicInfo={basicInfo}
+              />
+            </section>
+          )}
+
+          {/* ── ⑧ 建築士相談 ── */}
+          {has('consult') && (
+            <section id="consult" className="app-section">
+              <SectionDivider label="一級建築士に相談する" />
+              <ConsultScreen
+                onSubmit={handleConsultSubmit}
+                onBackId={has('results') ? 'results' : 'preview'}
+                selectedPlan={selectedPlan}
+                basicInfo={basicInfo}
+                primaryFile={primaryFile}
+              />
+            </section>
+          )}
+
         </main>
       </div>
     </div>
   )
 }
 
-// ─── 同意モーダル（有料プラン遷移時） ────────────────────────────────────────
+// ─── 同意モーダル ─────────────────────────────────────────────────────────────
 
 const CONSENT_NOTICES = {
   ai: [
@@ -574,41 +758,17 @@ function ConsentModal({ plan, onAgree, onCancel }) {
   )
 }
 
-// ─── 決済完了画面 ─────────────────────────────────────────────────────────────
-
-function PaymentSuccessScreen({ onReset }) {
-  return (
-    <div className="screen screen-center">
-      <div className="done-wrap">
-        <div className="done-icon">✓</div>
-        <h2 className="done-title">お支払い完了</h2>
-        <p className="done-sub">ご相談を受け付けました。</p>
-        <div className="done-card">
-          <p className="done-message">3営業日以内にご登録のメールアドレスへご連絡いたします。</p>
-          <p className="done-message" style={{marginTop:'8px',fontSize:'13px',color:'#787878'}}>
-            相談後の添削資料はご登録のメールアドレスへお送りします。
-          </p>
-        </div>
-        <div className="done-notice">
-          <p>設計責任は負いません。参考意見としてご活用ください</p>
-        </div>
-        <button className="btn-primary" onClick={onReset}>トップに戻る</button>
-      </div>
-    </div>
-  )
-}
-
 // ─── ランディング画面 ──────────────────────────────────────────────────────────
 
 function LandingScreen({ onStart }) {
   return (
     <div className="screen">
       <div className="landing-hero">
-        <div className="supervisor-banner">
-          一級建築士が監修した診断システム
-        </div>
-        <h1 className="landing-title">あなたの間取り、<br /><span className="landing-accent">本当に大丈夫？</span></h1>
-        <p className="landing-sub">住んでから気づく後悔を、建てる前に発見。<br />間取り画像をアップロードするだけで、<br />プロの視点でスコアリングします。</p>
+        <span className="landing-blob-md" />
+        <span className="landing-blob-xs" />
+        <h1 className="landing-title"><span className="landing-accent">10年後</span>の私へ。</h1>
+        <p className="landing-subtitle">この間取り、<span className="landing-accent">何点</span>だった？</p>
+        <p className="landing-sub">画像をアップロードするだけで<br />建てる前にプロが採点します。</p>
       </div>
 
       <div className="landing-features">
@@ -635,14 +795,10 @@ function LandingScreen({ onStart }) {
 
 // ─── 基本情報入力画面 ──────────────────────────────────────────────────────────
 
-function BasicInfoScreen({ basicInfo, onChange, onNext, onBack }) {
+function BasicInfoScreen({ basicInfo, onChange, onNext, onBackId }) {
   const isComplete = basicInfo.structure && basicInfo.floors && basicInfo.familySize && basicInfo.ageGroup
   return (
     <div className="screen">
-      <StepBar step={1} />
-      <h2 className="page-title">建物の情報を教えてください</h2>
-      <p className="page-sub">診断の精度を高めるために使用します</p>
-
       <div className="info-fields">
         {[
           { label: '構造方式',     options: STRUCTURE_OPTIONS, key: 'structure' },
@@ -652,31 +808,28 @@ function BasicInfoScreen({ basicInfo, onChange, onNext, onBack }) {
         ].map(({ label, options, key }) => (
           <div key={key} className="info-field">
             <label className="info-label">{label}</label>
-            <PillSelect options={options} value={basicInfo[key]} onChange={v => onChange(prev => ({ ...prev, [key]: v }))} />
+            <PillSelect options={options} value={basicInfo[key]} onChange={v => onChange(prev => ({ ...prev, [key]: v }))} row />
           </div>
         ))}
         <div className="info-field">
           <label className="info-label">建設予算　<span className="slot-optional">任意</span></label>
-          <PillSelect options={BUDGET_OPTIONS} value={basicInfo.budget} onChange={v => onChange(prev => ({ ...prev, budget: v }))} />
+          <PillSelect options={BUDGET_OPTIONS} value={basicInfo.budget} onChange={v => onChange(prev => ({ ...prev, budget: v }))} cols3 />
         </div>
       </div>
 
       <button className="btn-primary" onClick={onNext} disabled={!isComplete} style={{ opacity: isComplete ? 1 : 0.35 }}>
         次へ（診断コースを選ぶ）
       </button>
-      <button className="btn-ghost" onClick={onBack}>戻る</button>
+      <BackButton targetId={onBackId} label="戻る" />
     </div>
   )
 }
 
 // ─── 診断コース選択画面 ────────────────────────────────────────────────────────
 
-function PlanSelectScreen({ selectedPlan, onChange, onNext, onBack }) {
+function PlanSelectScreen({ selectedPlan, onChange, onNext, onBackId }) {
   return (
     <div className="screen">
-      <StepBar step={2} />
-      <h2 className="page-title">どのコースで診断しますか？</h2>
-
       <div className="plan-cards">
         {PLANS.map(plan => (
           <div key={plan.id} className={`plan-card${selectedPlan === plan.id ? ' plan-card-active' : ''}`} onClick={() => onChange(plan.id)}>
@@ -702,22 +855,20 @@ function PlanSelectScreen({ selectedPlan, onChange, onNext, onBack }) {
       <button className="btn-primary" onClick={onNext} disabled={!selectedPlan} style={{ opacity: selectedPlan ? 1 : 0.35 }}>
         {selectedPlan === 'architect' ? '間取りをアップロードして相談する' : 'この診断を始める'}
       </button>
-      <button className="btn-ghost" onClick={onBack}>戻る</button>
+      <BackButton targetId={onBackId} label="戻る" />
     </div>
   )
 }
 
 // ─── ファイルアップロード画面 ──────────────────────────────────────────────────
 
-function UploadScreen({ files, onFileChange, floors, error, onNext, onBack, selectedPlan, hasRequired }) {
+function UploadScreen({ files, onFileChange, floors, error, onNext, onBackId, selectedPlan, hasRequired }) {
   const slots = getFileSlots(floors)
   const planSlots = slots.filter(s => s.group === 'plan')
   const extraSlots = slots.filter(s => s.group === 'extra')
 
   return (
     <div className="screen">
-      <StepBar step={3} />
-
       <div className="upload-section-title">
         <span className="upload-section-label">間取り図</span>
         <span className="upload-section-note">階数に応じてアップロード</span>
@@ -729,7 +880,7 @@ function UploadScreen({ files, onFileChange, floors, error, onNext, onBack, sele
 
       {selectedPlan !== 'free' && (
         <>
-          <div className="upload-section-title" style={{ marginTop: 20 }}>
+          <div className="upload-section-title" style={{ marginTop: 22 }}>
             <span className="upload-section-label">追加資料</span>
             <span className="upload-section-note">任意</span>
           </div>
@@ -743,22 +894,24 @@ function UploadScreen({ files, onFileChange, floors, error, onNext, onBack, sele
       <p className="upload-format-note">JPG · PNG · WebP · PDF ／ 1ファイル最大20MB</p>
       {error && <div className="error-box">{error}</div>}
 
-      <button className="btn-primary" onClick={onNext} disabled={!hasRequired} style={{ opacity: hasRequired ? 1 : 0.35, marginTop: 20 }}>
+      <button className="btn-primary" onClick={onNext} disabled={!hasRequired} style={{ opacity: hasRequired ? 1 : 0.35, marginTop: 22 }}>
         確認して次へ
       </button>
-      <button className="btn-ghost" onClick={onBack}>戻る</button>
+      <BackButton targetId={onBackId} label="戻る" />
     </div>
   )
 }
 
-// ─── プレビュー画面 ────────────────────────────────────────────────────────────
+// ─── 確認・同意画面（チェックリスト込み） ─────────────────────────────────────
 
-function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBack, error }) {
+function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBackId, error, checklist, onChecklistChange }) {
   const isArchitect = selectedPlan === 'architect'
   const isFree      = selectedPlan === 'free'
   const isAI        = selectedPlan === 'ai'
   const allFiles    = Object.entries(files).filter(([, f]) => f)
   const [agreed, setAgreed] = useState(false)
+
+  const toggle = (key) => onChecklistChange(prev => ({ ...prev, [key]: !prev[key] }))
 
   const notices = [
     ...(isFree ? ['本診断は一般的な観点に基づく参考情報です。個別の条件や詳細な図面情報を反映した精度には限りがあります。'] : []),
@@ -769,8 +922,7 @@ function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBack, e
 
   return (
     <div className="screen">
-      <h2 className="page-title">アップロード内容を確認</h2>
-
+      {/* アップロードファイル確認 */}
       <div className="preview-file-list">
         {allFiles.map(([key, file]) => (
           <div key={key} className="preview-file-row">
@@ -780,6 +932,27 @@ function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBack, e
               <div className="preview-thumb preview-thumb-pdf">PDF</div>
             )}
             <span className="preview-file-name">{file.name}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* チェックリスト */}
+      <div className="check-items-list">
+        <p className="check-intro-text">図面に含まれている情報を確認してください</p>
+        {CHECK_ITEMS.map(item => (
+          <div key={item.key}
+            className={`check-item-row${checklist[item.key] ? ' checked' : ''}`}
+            onClick={() => toggle(item.key)}>
+            <div className={`check-checkbox${checklist[item.key] ? ' checked' : ''}`}>
+              {checklist[item.key] && '✓'}
+            </div>
+            <div className="check-item-body">
+              <p className="check-item-label">
+                {item.label}
+                {item.required && <span className="slot-required">必須</span>}
+              </p>
+              <p className="check-item-note">{item.note}</p>
+            </div>
           </div>
         ))}
       </div>
@@ -803,7 +976,7 @@ function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBack, e
       <button className="btn-primary" onClick={onDiagnose} disabled={!agreed}>
         {isArchitect ? '相談を申し込む画面へ進む' : '診断を開始する'}
       </button>
-      <button className="btn-ghost" onClick={onBack}>ファイルを変更する</button>
+      <BackButton targetId={onBackId} label="ファイルを変更する" />
     </div>
   )
 }
@@ -911,7 +1084,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
           </ul>
           <button className="btn-premium-orange" onClick={onDetailDiagnose}>AI詳細診断を見る（¥500）</button>
         </div>
-        <div className="premium-card" style={{ marginTop: 10 }}>
+        <div className="premium-card" style={{ marginTop: 11 }}>
           <div className="premium-card-top">
             <div><span className="premium-card-name">③ 一級建築士相談</span><p className="premium-card-sub">専門家が直接チェック</p></div>
             <span className="premium-card-price">¥3,000</span>
@@ -923,7 +1096,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
           </ul>
           <button className="btn-premium-white" onClick={onConsult}>一級建築士に相談する（¥3,000）</button>
         </div>
-        <div className="plan-disclaimer" style={{ marginTop: 10 }}>
+        <div className="plan-disclaimer" style={{ marginTop: 11 }}>
           ※ AI診断と一級建築士による診断では、観点や指摘内容が異なる場合があります。
         </div>
         <p className="premium-note">※ 設計責任は負いません。あくまで参考意見としてご活用ください。</p>
@@ -938,7 +1111,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
 
 // ─── AI詳細診断 結果画面 ───────────────────────────────────────────────────────
 
-function DetailScreen({ detail, freeDiagnosis, onBack, onReset, onConsult }) {
+function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId }) {
   const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict } = detail
   const screenRef = useRef(null)
   const [saving, setSaving] = useState(false)
@@ -1032,7 +1205,7 @@ function DetailScreen({ detail, freeDiagnosis, onBack, onReset, onConsult }) {
           </ul>
           <button className="btn-premium-orange" onClick={onConsult}>一級建築士に相談する</button>
         </div>
-        <div className="plan-disclaimer" style={{ marginTop: 10 }}>
+        <div className="plan-disclaimer" style={{ marginTop: 11 }}>
           ※ AI診断と一級建築士による診断では、観点や指摘内容が異なる場合があります。
         </div>
         <p className="premium-note">※ 設計責任は負いません。あくまで参考意見としてご活用ください。</p>
@@ -1041,7 +1214,7 @@ function DetailScreen({ detail, freeDiagnosis, onBack, onReset, onConsult }) {
       <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
         {saving ? '保存中...' : '📷 診断結果を画像で保存'}
       </button>
-      <button className="btn-ghost screenshot-hide" onClick={onBack}>無料診断結果に戻る</button>
+      {onBackId && <BackButton targetId={onBackId} label="無料診断結果に戻る" />}
       <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
   )
@@ -1049,7 +1222,7 @@ function DetailScreen({ detail, freeDiagnosis, onBack, onReset, onConsult }) {
 
 // ─── 建築士相談 フォーム ───────────────────────────────────────────────────────
 
-function ConsultScreen({ onSubmit, onBack, selectedPlan, basicInfo, primaryFile }) {
+function ConsultScreen({ onSubmit, onBackId, selectedPlan, basicInfo, primaryFile }) {
   const [form, setForm]       = useState({ name: '', email: '', message: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
@@ -1104,14 +1277,14 @@ function ConsultScreen({ onSubmit, onBack, selectedPlan, basicInfo, primaryFile 
           {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥3,000）'}
         </button>
       </form>
-      <button className="btn-ghost" onClick={onBack}>戻る</button>
+      <BackButton targetId={onBackId} label="戻る" />
     </div>
   )
 }
 
 // ─── AI詳細診断 支払い画面 ────────────────────────────────────────────────────
 
-function AiPayScreen({ onSubmit, onBack, basicInfo }) {
+function AiPayScreen({ onSubmit, onBackId, basicInfo }) {
   const [form, setForm]       = useState({ name: '', email: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
@@ -1158,116 +1331,7 @@ function AiPayScreen({ onSubmit, onBack, basicInfo }) {
           {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥500）'}
         </button>
       </form>
-      <button className="btn-ghost" onClick={onBack}>戻る</button>
-    </div>
-  )
-}
-
-function AiPaymentSuccessScreen({ onReset }) {
-  return (
-    <div className="screen screen-center">
-      <div className="done-wrap">
-        <div className="done-icon">✓</div>
-        <h2 className="done-title">お支払い完了</h2>
-        <p className="done-sub">AI詳細診断のお申し込みを受け付けました。</p>
-        <div className="done-card">
-          <p className="done-message">診断結果はご登録のメールアドレスへお送りします。</p>
-          <p className="done-message" style={{marginTop:'8px',fontSize:'13px',color:'#787878'}}>
-            相談後の添削資料はご登録のメールアドレスへお送りします。
-          </p>
-        </div>
-        <div className="done-notice">
-          <p>AIによる診断のため、必ずしも正確とは限りません。参考情報としてご活用ください</p>
-        </div>
-        <button className="btn-primary" onClick={onReset}>トップに戻る</button>
-      </div>
-    </div>
-  )
-}
-
-// ─── 完了画面 ─────────────────────────────────────────────────────────────────
-
-function ConsultDoneScreen({ result, onReset }) {
-  return (
-    <div className="screen screen-center">
-      <div className="done-wrap">
-        <div className="done-icon">✓</div>
-        <h2 className="done-title">お申し込み完了</h2>
-        <p className="done-sub">ご相談を受け付けました。</p>
-        <div className="done-card">
-          <div className="done-row"><span className="done-label">受付番号</span><span className="done-value ref">{result.ref_no}</span></div>
-          <div className="done-row"><span className="done-label">受付日時</span><span className="done-value">{result.received}</span></div>
-          <p className="done-message">{result.message}</p>
-        </div>
-        <div className="done-notice">
-          <p>3営業日以内にご登録のメールアドレスへご連絡します</p>
-          <p>設計責任は負いません。参考意見としてご活用ください</p>
-        </div>
-        <button className="btn-primary" onClick={onReset}>トップに戻る</button>
-      </div>
-    </div>
-  )
-}
-
-// ─── 図面確認チェックリスト画面 ──────────────────────────────────────────────
-
-function CheckScreen({ checklist, onChange, onNext, onBack }) {
-  const toggle = (key) => onChange(prev => ({ ...prev, [key]: !prev[key] }))
-  const requiredDone = CHECK_ITEMS.filter(i => i.required).every(i => checklist[i.key])
-
-  return (
-    <div className="screen">
-      <h2 className="page-title">図面の内容を確認</h2>
-
-      <div className="check-intro">
-        <p>AIが正確に診断するために、アップロードした図面に以下の情報が含まれているか確認してください。不足している場合は戻って追加のファイルを添付できます。</p>
-      </div>
-
-      <div className="check-items-list">
-        {CHECK_ITEMS.map(item => (
-          <div key={item.key}
-            className={`check-item-row${checklist[item.key] ? ' checked' : ''}`}
-            onClick={() => toggle(item.key)}>
-            <div className={`check-checkbox${checklist[item.key] ? ' checked' : ''}`}>
-              {checklist[item.key] && '✓'}
-            </div>
-            <div className="check-item-body">
-              <p className="check-item-label">
-                {item.label}
-                {item.required && <span className="slot-required">必須</span>}
-              </p>
-              <p className="check-item-note">{item.note}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {!requiredDone && (
-        <div className="check-warn-box">
-          必須項目（方位・部屋名）が確認できない場合、診断精度が下がることがあります。このまま進むこともできます。
-        </div>
-      )}
-
-      <button className="btn-primary" onClick={onNext} style={{ marginTop: 8 }}>
-        {requiredDone ? '診断へ進む' : 'このまま診断へ進む'}
-      </button>
-      <button className="btn-ghost" onClick={onBack}>ファイルを確認・追加する</button>
-    </div>
-  )
-}
-
-// ─── ステップバー ──────────────────────────────────────────────────────────────
-
-function StepBar({ step }) {
-  return (
-    <div className="step-header">
-      <div className="step-indicators">
-        {[1,2,3].map((s, i) => (<>
-          {i > 0 && <span key={`l${s}`} className={`step-line${step > s-1 ? ' step-line-done' : ''}`} />}
-          <span key={s} className={`step-dot${step === s ? ' step-active' : step > s ? ' step-done' : ''}`} />
-        </>))}
-      </div>
-      <p className="step-label">STEP {step} / 3　{['基本情報の入力','診断コースを選ぶ','ファイルをアップロード'][step-1]}</p>
+      <BackButton targetId={onBackId} label="戻る" />
     </div>
   )
 }
