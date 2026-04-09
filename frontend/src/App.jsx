@@ -329,10 +329,10 @@ function SectionDivider({ label }) {
 
 // ─── 戻るボタン（アンカースクロール） ─────────────────────────────────────────
 
-function BackButton({ targetId, label = '戻る' }) {
-  const handleBack = () => {
+function BackButton({ targetId, label = '戻る', onClick }) {
+  const handleBack = onClick || (() => {
     document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  })
   return <button className="btn-ghost" onClick={handleBack}>{label}</button>
 }
 
@@ -361,6 +361,10 @@ export default function App() {
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null)
   // 決済完了（Stripeリダイレクト後）
   const [paymentDone, setPaymentDone]         = useState(null) // 'architect' | 'ai' | null
+  // APIキー未設定時のモックモード（利用回数制限なし）
+  const [mockMode, setMockMode]               = useState(false)
+  // 診断結果別画面
+  const [resultsView, setResultsView]         = useState(null) // null | 'free' | 'detail'
 
   // スプラッシュ＋スクロール復元防止
   useEffect(() => {
@@ -374,6 +378,7 @@ export default function App() {
   // reCAPTCHA 初期化
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(d => {
+      if (d.mockMode) setMockMode(true)
       if (d.recaptchaSiteKey) {
         setRecaptchaSiteKey(d.recaptchaSiteKey)
         const s = document.createElement('script')
@@ -449,8 +454,8 @@ export default function App() {
       goTo('preview', 'consult')
       return
     }
-    // 無料診断：1日1回制限チェック
-    if (selectedPlan === 'free' && !checkDailyLimit()) {
+    // 無料診断：1日1回制限チェック（モックモード時はスキップ）
+    if (selectedPlan === 'free' && !mockMode && !checkDailyLimit()) {
       setError('本日の無料診断は上限に達しました。明日またお試しください。')
       return
     }
@@ -472,11 +477,11 @@ export default function App() {
       const res = await fetch(isDetail ? '/api/diagnose/detail' : '/api/diagnose', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
-      if (selectedPlan === 'free') recordUsage()
+      if (selectedPlan === 'free' && !mockMode) recordUsage()
       setLoadingPct(100)
       setTimeout(() => {
-        if (isDetail) setDetailDiagnosis(data)
-        else setDiagnosis(data)
+        if (isDetail) { setDetailDiagnosis(data); setResultsView('detail') }
+        else { setDiagnosis(data); setResultsView('free') }
         setIsLoading(false)
         setIsDetailLoading(false)
       }, 400)
@@ -515,6 +520,7 @@ export default function App() {
   }
 
   const handleReset = () => {
+    setResultsView(null)
     setRevealed(['landing'])
     setBasicInfo({ structure: '', floors: '', familySize: '', ageGroup: '', budget: '' })
     setSelectedPlan(null); setFiles({}); setChecklist({})
@@ -524,6 +530,57 @@ export default function App() {
   }
 
   const withConsent = (plan, action) => setConsentModal({ plan, action })
+
+  // ─── ヘッダー共通JSX ─────────────────────────────────────────────────────────
+  const AppHeader = () => (
+    <header className="app-header">
+      <div className="logo">
+        <LogoMark />
+        <div className="logo-info">
+          <span className="logo-title">Archi AI</span>
+          <span className="logo-sub">家づくりの不安をワンタップで可視化</span>
+        </div>
+      </div>
+    </header>
+  )
+
+  // 診断結果 別画面（無料）
+  if (resultsView === 'free' && diagnosis) {
+    return (
+      <div className="app"><div className="app-content app-content--visible">
+        <AppHeader />
+        <main className="app-main">
+          <ResultsScreen
+            diagnosis={diagnosis}
+            basicInfo={basicInfo}
+            onReset={handleReset}
+            onDetailDiagnose={() => { setResultsView(null); goTo('results', 'ai-pay') }}
+            onConsult={() => { setResultsView(null); withConsent('architect', () => goTo('results', 'consult')) }}
+            error={error}
+          />
+        </main>
+      </div></div>
+    )
+  }
+
+  // 診断結果 別画面（AI詳細）
+  if (resultsView === 'detail' && detailDiagnosis) {
+    return (
+      <div className="app"><div className="app-content app-content--visible">
+        <AppHeader />
+        <main className="app-main">
+          <DetailScreen
+            detail={detailDiagnosis}
+            freeDiagnosis={diagnosis}
+            onScreenRef={null}
+            onReset={handleReset}
+            onConsult={() => { setResultsView(null); withConsent('architect', () => goTo('results', 'consult')) }}
+            onBack={() => setResultsView('free')}
+          />
+        </main>
+      </div></div>
+    )
+  }
 
   // 決済完了ページ（Stripeリダイレクト後）
   if (paymentDone) {
@@ -657,8 +714,8 @@ export default function App() {
             </section>
           )}
 
-          {/* ── ⑥ 診断結果（ローディング→結果） ── */}
-          {has('results') && (
+          {/* ── ⑥ 診断ローディング（結果は別画面） ── */}
+          {has('results') && (isLoading || isDetailLoading || (error && !diagnosis && !detailDiagnosis)) && (
             <section id="results" className="app-section">
               {(isLoading || isDetailLoading) ? (
                 <LoadingScreen
@@ -666,30 +723,12 @@ export default function App() {
                   pct={loadingPct}
                   title={isDetailLoading ? '詳細分析中...' : 'AIが診断中...'}
                 />
-              ) : error && !diagnosis && !detailDiagnosis ? (
+              ) : (
                 <div className="screen">
                   <div className="error-box">{error}</div>
                   <BackButton targetId="preview" label="戻って再試行する" />
                 </div>
-              ) : detailDiagnosis ? (
-                <DetailScreen
-                  detail={detailDiagnosis}
-                  freeDiagnosis={diagnosis}
-                  onScreenRef={null}
-                  onReset={handleReset}
-                  onConsult={() => withConsent('architect', () => goTo('results', 'consult'))}
-                  onBackId="preview"
-                />
-              ) : diagnosis ? (
-                <ResultsScreen
-                  diagnosis={diagnosis}
-                  basicInfo={basicInfo}
-                  onReset={handleReset}
-                  onDetailDiagnose={() => goTo('results', 'ai-pay')}
-                  onConsult={() => withConsent('architect', () => goTo('results', 'consult'))}
-                  error={error}
-                />
-              ) : null}
+              )}
             </section>
           )}
 
@@ -699,7 +738,7 @@ export default function App() {
               <SectionDivider label="AI詳細診断へアップグレード" />
               <AiPayScreen
                 onSubmit={handleAiPaySubmit}
-                onBackId="results"
+                onBack={() => setResultsView('free')}
                 basicInfo={basicInfo}
               />
             </section>
@@ -987,14 +1026,12 @@ function LoadingScreen({ message, pct, title }) {
   return (
     <div className="screen screen-center">
       <div className="loading-wrap">
-        <svg className="spin" width="64" height="64" viewBox="0 0 64 64">
-          <circle cx="32" cy="32" r="26" fill="none" stroke="#E5E7EB" strokeWidth="5" />
-          <circle cx="32" cy="32" r="26" fill="none" stroke="#C42230" strokeWidth="5"
-            strokeDasharray="40 122" strokeLinecap="butt" />
-        </svg>
+        <div className="amoeba-loader">
+          <div className="amoeba-liquid" style={{ height: `${pct}%`, transition: 'height 1.2s ease' }} />
+          <span className="amoeba-pct">{pct}<small>%</small></span>
+        </div>
         <h2 className="loading-title">{title}</h2>
         <p className="loading-msg">{message}</p>
-        <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%`, transition: 'width 1.2s ease' }} /></div>
         <p className="loading-hint">一級建築士監修の診断基準で分析しています</p>
       </div>
     </div>
@@ -1102,7 +1139,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         <p className="premium-note">※ 設計責任は負いません。あくまで参考意見としてご活用ください。</p>
       </div>
       <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
-        {saving ? '保存中...' : '📷 診断結果を画像で保存'}
+        {saving ? '保存中...' : '診断結果を画像で保存'}
       </button>
       <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
@@ -1111,7 +1148,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
 
 // ─── AI詳細診断 結果画面 ───────────────────────────────────────────────────────
 
-function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId }) {
+function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onBack }) {
   const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict } = detail
   const screenRef = useRef(null)
   const [saving, setSaving] = useState(false)
@@ -1212,9 +1249,9 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId }) {
       </div>
 
       <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
-        {saving ? '保存中...' : '📷 診断結果を画像で保存'}
+        {saving ? '保存中...' : '診断結果を画像で保存'}
       </button>
-      {onBackId && <BackButton targetId={onBackId} label="無料診断結果に戻る" />}
+      {(onBackId || onBack) && <BackButton targetId={onBackId} onClick={onBack} label="無料診断結果に戻る" />}
       <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
   )
@@ -1277,14 +1314,14 @@ function ConsultScreen({ onSubmit, onBackId, selectedPlan, basicInfo, primaryFil
           {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥3,000）'}
         </button>
       </form>
-      <BackButton targetId={onBackId} label="戻る" />
+      <BackButton targetId={onBackId} onClick={onBack} label="戻る" />
     </div>
   )
 }
 
 // ─── AI詳細診断 支払い画面 ────────────────────────────────────────────────────
 
-function AiPayScreen({ onSubmit, onBackId, basicInfo }) {
+function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo }) {
   const [form, setForm]       = useState({ name: '', email: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)

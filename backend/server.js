@@ -441,7 +441,7 @@ app.get('/api/health', (req, res) => {
 
 // ─── フロント向け公開設定 ─────────────────────────────────────────────────────
 app.get('/api/config', (req, res) => {
-  res.json({ recaptchaSiteKey: process.env.RECAPTCHA_SITE_KEY || null });
+  res.json({ recaptchaSiteKey: process.env.RECAPTCHA_SITE_KEY || null, mockMode: MOCK_MODE });
 });
 
 // ─── フロントエンド静的ファイル配信（本番ビルド用） ──────────────────────────
