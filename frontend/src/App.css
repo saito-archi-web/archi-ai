@@ -119,9 +119,9 @@ body {
 
 .logo-title {
   color: #1A1A1A;
-  font-weight: 400;
+  font-weight: 700;
   font-size: 20px;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   line-height: 1.2;
 }
 
@@ -417,17 +417,17 @@ body {
 
 .loading-title { font-size: 22px; font-weight: 800; color: var(--navy); margin-bottom: 11px; }
 .loading-msg   { font-size: 14px; color: var(--muted); height: 22px; margin-bottom: 11px; }
-.loading-hint  { font-size: 12px; color: var(--border); margin-top: 11px; }
+.loading-hint  { font-size: 12px; color: #888; margin-top: 11px; }
 
 /* ─── アメーバ液体ローダー ── */
 .amoeba-loader {
   position: relative;
-  width: 160px;
-  height: 160px;
+  width: 112px;
+  height: 112px;
   border-radius: 62% 38% 46% 54% / 60% 44% 56% 40%;
   background: rgba(196, 34, 48, 0.10);
   overflow: hidden;
-  margin: 0 auto 28px;
+  margin: 0 auto 20px;
   animation: amoeba-loader-morph 8s ease-in-out infinite;
 }
 
@@ -447,36 +447,19 @@ body {
   background: rgba(196, 34, 48, 0.32);
 }
 
-.amoeba-liquid::before {
-  content: '';
-  position: absolute;
-  top: -20px;
-  left: -20%;
-  width: 140%;
-  height: 40px;
-  background: rgba(196, 34, 48, 0.32);
-  border-radius: 40%;
-  animation: wave-roll 2.5s linear infinite;
-}
-
-@keyframes wave-roll {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
 .amoeba-pct {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 2;
-  font-size: 30px;
+  font-size: 21px;
   font-weight: 900;
   color: var(--navy);
   line-height: 1;
 }
 
-.amoeba-pct small { font-size: 15px; font-weight: 700; }
+.amoeba-pct small { font-size: 11px; font-weight: 700; }
 
 /* ─── 結果 — 総合スコア ──────────────────────────────────────────────────────── */
 .score-hero {
@@ -1352,7 +1335,7 @@ body {
 .landing-hero > .landing-blob-xs { position: absolute; z-index: 0; }
 
 .landing-subtitle {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--muted);
   letter-spacing: 0.11em;
@@ -1389,8 +1372,8 @@ body {
 }
 
 .landing-title {
-  font-size: 34px;
-  font-weight: 900;
+  font-size: 27px;
+  font-weight: 800;
   line-height: 1.3;
   color: var(--navy);
   letter-spacing: 0.06em;
@@ -1402,7 +1385,7 @@ body {
   display: inline-block;
   text-align: left;
   margin-top: 12px;
-  font-size: 14px;
+  font-size: 11px;
   color: var(--muted);
   line-height: 1.8;
   letter-spacing: 0.03em;
