@@ -151,10 +151,13 @@ const DIAGNOSIS_PROMPT = `あなたは経験豊富な住宅建築士です。
 【評価から除外する観点】
 - 1階キッチンから2階への食事配膳（階段経由の配膳負担）は問題点・改善提案に含めない
 
-【出力形式】
-以下のJSONのみ出力してください。説明文・マークダウン記法・コードブロックは不要：
+【重要：出力ルール】
+- 画像の内容にかかわらず、必ず以下のJSON形式のみを出力すること
+- 説明文・マークダウン・コードブロック・謝罪文は一切不要
+- 間取り図でない画像（写真・イラスト等）の場合は not_floor_plan を true にして overall_comment に理由を記載すること
 
-{"scores":{"dosen":整数,"lighting":整数,"storage":整数,"space":整数,"future":整数},"total":整数,"good_points":["良い点1","良い点2","良い点3"],"issues":["問題点1（具体的な観察事実として）","問題点2","問題点3"],"suggestions":["改善の視点1（観察・指摘のみ。断定や推薦は避ける）","改善の視点2","改善の視点3"],"overall_comment":"この間取りへの客観的な所見を80〜120字で。断定・推薦・強い勧誘表現は使わない。"}`;
+【出力形式】
+{"scores":{"dosen":整数,"lighting":整数,"storage":整数,"space":整数,"future":整数},"total":整数,"not_floor_plan":false,"good_points":["良い点1","良い点2","良い点3"],"issues":["問題点1","問題点2","問題点3"],"suggestions":["改善の視点1","改善の視点2","改善の視点3"],"overall_comment":"所見を80〜120字で。"}`;
 
 // 注意: suggestions/issues は「〜が見受けられます」「〜の可能性があります」「〜を確認することが有効かもしれません」
 // のような観察・示唆に留める。「強くお勧めします」「ぜひ」「必ず」「〜すべき」は使用しない。
@@ -246,6 +249,11 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
     }
 
     const result = JSON.parse(jsonMatch[0]);
+
+    // 間取り図以外の画像チェック
+    if (result.not_floor_plan) {
+      return res.status(400).json({ error: '間取り図が読み取れませんでした。間取りの平面図をアップロードしてください。' });
+    }
 
     // 必須フィールドの検証
     const required = ['scores', 'total', 'good_points', 'issues', 'suggestions', 'overall_comment'];
