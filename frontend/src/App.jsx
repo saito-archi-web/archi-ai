@@ -325,8 +325,9 @@ function AppHeader() {
 // ─── ファイルスロット ──────────────────────────────────────────────────────────
 
 function resolveFileType(f) {
-  if (f.type) return f.type
   const ext = f.name.split('.').pop().toLowerCase()
+  if (f.type === 'image/heic' || f.type === 'image/heif' || ext === 'heic' || ext === 'heif') return 'image/heic'
+  if (f.type) return f.type
   return { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', pdf: 'application/pdf' }[ext] || ''
 }
 
@@ -346,6 +347,11 @@ function FileSlot({ label, required, file, onChange }) {
     if (!f) return
     const type = resolveFileType(f)
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+    if (type === 'image/heic') {
+      alert('HEIC形式の画像はご利用いただけません。\n\niPhoneの場合は以下の設定でJPGに変更できます：\n設定 → カメラ → フォーマット → 「互換性優先」を選択')
+      if (inputRef.current) inputRef.current.value = ''
+      return
+    }
     if (!allowed.includes(type)) { alert('JPG・PNG・WebP・PDF形式のみ対応しています'); return }
     if (f.size > 20 * 1024 * 1024) { alert('ファイルサイズは20MB以下にしてください'); return }
     const ok = await validateFile(f)
@@ -379,7 +385,7 @@ function FileSlot({ label, required, file, onChange }) {
           </div>
         )}
         <input ref={inputRef} type="file"
-          accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+          accept=".jpg,.jpeg,.png,.webp,.pdf,.heic,.heif,image/jpeg,image/png,image/webp,application/pdf,image/heic,image/heif"
           onChange={handleChange}
           style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }} />
       </div>
@@ -563,13 +569,18 @@ export default function App() {
       goTo('preview', 'consult')
       return
     }
+    // 有料AIプランは申し込みフォーム（名前・メール・質問）へ
+    if (selectedPlan === 'ai') {
+      goTo('preview', 'ai-pay')
+      return
+    }
     // 無料診断：1日1回制限チェック（モックモード時はスキップ）
     if (selectedPlan === 'free' && !mockMode && !testMode && !checkDailyLimit()) {
       setError('本日の無料診断は上限に達しました。明日またお試しください。')
       return
     }
 
-    const isDetail = selectedPlan === 'ai'
+    const isDetail = false
     setError(null)
     setDiagnosis(null)
     setDetailDiagnosis(null)
@@ -632,6 +643,8 @@ export default function App() {
   }
 
   const handleAiPaySubmit = async (form) => {
+    // results セクションを revealed に追加してからローディング開始
+    goTo('ai-pay', 'results')
     if (mockMode || testMode) {
       // モック/テストモード：決済不要、その場で診断実行
       setIsDetailLoading(true)

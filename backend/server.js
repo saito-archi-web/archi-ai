@@ -161,7 +161,21 @@ const DIAGNOSIS_PROMPT = `あなたは経験豊富な住宅建築士です。
 // 詳細な改善提案・具体的アドバイスは有料の詳細診断（DETAIL_PROMPT）でのみ提供する。
 
 // ─── ファイルをClaudeコンテンツブロックに変換 ────────────────────────────────
+const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
 function buildFileContentBlocks(files) {
+  for (const file of files) {
+    if (file.mimetype === 'image/heic' || file.mimetype === 'image/heif') {
+      const err = new Error('HEIC形式の画像はご利用いただけません。iPhoneの設定→カメラ→フォーマット→「互換性優先」に変更してJPG形式で撮影してください。');
+      err.code = 'UNSUPPORTED_FORMAT';
+      throw err;
+    }
+    if (file.mimetype !== 'application/pdf' && !SUPPORTED_IMAGE_TYPES.includes(file.mimetype)) {
+      const err = new Error(`未対応のファイル形式です（${file.mimetype}）。JPG・PNG・WebP・PDF形式をご利用ください。`);
+      err.code = 'UNSUPPORTED_FORMAT';
+      throw err;
+    }
+  }
   return files.map(file => {
     if (file.mimetype === 'application/pdf') {
       return {
@@ -245,7 +259,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
   } catch (err) {
     console.error('診断エラー:', err);
 
-    if (err.message?.includes('JPG') || err.message?.includes('形式')) {
+    if (err.code === 'UNSUPPORTED_FORMAT' || err.message?.includes('JPG') || err.message?.includes('形式') || err.message?.includes('HEIC')) {
       return res.status(400).json({ error: err.message });
     }
     if (err.status === 401) {
