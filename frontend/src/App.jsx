@@ -915,6 +915,7 @@ export default function App() {
                 onSubmit={handleAiPaySubmit}
                 onBack={() => setResultsView('free')}
                 basicInfo={basicInfo}
+                testMode={testMode}
               />
             </section>
           )}
@@ -1552,7 +1553,7 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
 
 // ─── AI詳細診断 支払い画面 ────────────────────────────────────────────────────
 
-function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo }) {
+function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
   const [form, setForm]       = useState({ name: '', email: '', question: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
