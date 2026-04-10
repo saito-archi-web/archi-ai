@@ -3,6 +3,7 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
 
@@ -78,6 +79,15 @@ const MOCK_MODE = !process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KE
 const client = MOCK_MODE ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 if (MOCK_MODE) console.log('[モード] APIキー未設定 → モックデータで動作します');
+
+// ─── AI詳細診断ファイル一時保管（Stripe決済後に即時結果を返すため） ──────────
+const tempDiagnosisStore = new Map(); // id -> { files, result?, timestamp }
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 60 * 60 * 1000; // 2時間でTTL
+  for (const [id, entry] of tempDiagnosisStore) {
+    if (entry.timestamp < cutoff) tempDiagnosisStore.delete(id);
+  }
+}, 30 * 60 * 1000);
 
 const MOCK_DIAGNOSIS = {
   scores: { dosen: 72, lighting: 58, storage: 65, space: 80, future: 60 },
@@ -364,7 +374,8 @@ app.post('/api/create-checkout-session', upload.none(), async (req, res) => {
 });
 
 // ─── AI詳細診断 決済セッション作成（¥500） ──────────────────────────────────────
-app.post('/api/create-ai-checkout-session', upload.none(), async (req, res) => {
+// ファイルも受け取り、一時保存してIDを発行。決済後に即時診断できるようにする。
+app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
     const { name, email, structure, floors } = req.body;
     if (!name || !email) {
@@ -375,8 +386,16 @@ app.post('/api/create-ai-checkout-session', upload.none(), async (req, res) => {
       ? `https://${req.get('host')}`
       : `http://${req.get('host')}`;
 
+    // ファイルを一時保存（決済後の即時診断用）
+    const diagnosisId = crypto.randomUUID();
+    const files = req.files || [];
+    if (files.length > 0) {
+      tempDiagnosisStore.set(diagnosisId, { files, result: null, timestamp: Date.now() });
+    }
+    const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
+
     if (MOCK_STRIPE) {
-      return res.json({ url: `${origin}/?payment=ai-success` });
+      return res.json({ url: `${origin}/?payment=ai-success${didParam}` });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -393,8 +412,8 @@ app.post('/api/create-ai-checkout-session', upload.none(), async (req, res) => {
       }],
       mode: 'payment',
       customer_email: email,
-      metadata: { name, email, structure: structure || '', floors: floors || '' },
-      success_url: `${origin}/?payment=ai-success`,
+      metadata: { name, email, structure: structure || '', floors: floors || '', diagnosisId },
+      success_url: `${origin}/?payment=ai-success${didParam}`,
       cancel_url:  `${origin}/?payment=cancel`,
     });
 
@@ -402,6 +421,42 @@ app.post('/api/create-ai-checkout-session', upload.none(), async (req, res) => {
   } catch (err) {
     console.error('AI Stripe checkout error:', err);
     res.status(500).json({ error: '決済の準備中にエラーが発生しました。再度お試しください。' });
+  }
+});
+
+// ─── AI詳細診断 IDから実行（決済後即時結果用） ────────────────────────────────
+app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
+  const entry = tempDiagnosisStore.get(req.params.id);
+  if (!entry) {
+    return res.status(404).json({ error: '診断データが見つかりません。お手数ですが最初からやり直してください。' });
+  }
+
+  // キャッシュ済みの結果があれば即返す
+  if (entry.result) return res.json(entry.result);
+
+  if (MOCK_MODE) {
+    await new Promise(r => setTimeout(r, 2500));
+    entry.result = MOCK_DETAIL;
+    return res.json(MOCK_DETAIL);
+  }
+
+  try {
+    const fileBlocks = buildFileContentBlocks(entry.files);
+    const message = await client.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: DETAIL_PROMPT }] }],
+    });
+    const responseText = message.content[0].text.trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return res.status(500).json({ error: 'AIの応答形式が不正でした。再度お試しください。' });
+    const result = JSON.parse(jsonMatch[0]);
+    entry.result = result; // キャッシュ
+    res.json(result);
+  } catch (err) {
+    console.error('ID別詳細診断エラー:', err);
+    if (err.status === 429) return res.status(429).json({ error: 'しばらく時間をおいて再度お試しください。' });
+    res.status(500).json({ error: '詳細診断中にエラーが発生しました。再度お試しください。' });
   }
 });
 

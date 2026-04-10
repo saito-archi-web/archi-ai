@@ -1,6 +1,62 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
 
+// ─── テスト用パスワードゲート ──────────────────────────────────────────────────
+const TEST_PASSWORD = 'moyasi'
+const TEST_AUTH_KEY = 'archi_test_auth'
+
+function PasswordGate({ onAuth }) {
+  const [input, setInput] = useState('')
+  const [error, setError] = useState(false)
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (input === TEST_PASSWORD) {
+      try { sessionStorage.setItem(TEST_AUTH_KEY, '1') } catch {}
+      onAuth()
+    } else {
+      setError(true)
+      setInput('')
+    }
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      minHeight: '100vh', background: '#F4F2F2',
+    }}>
+      <div style={{ textAlign: 'center', padding: '32px 24px', maxWidth: 320, width: '100%' }}>
+        <div style={{ fontSize: 13, color: '#888', marginBottom: 24, letterSpacing: '0.05em' }}>
+          テストバージョン
+        </div>
+        <form onSubmit={handleSubmit}>
+          <input
+            type="password"
+            value={input}
+            onChange={e => { setInput(e.target.value); setError(false) }}
+            placeholder="パスワードを入力"
+            autoFocus
+            style={{
+              width: '100%', padding: '12px 16px', fontSize: 16,
+              border: `1.5px solid ${error ? '#C42230' : '#D0CCCC'}`,
+              borderRadius: 8, outline: 'none', background: '#fff',
+              boxSizing: 'border-box', marginBottom: 8,
+            }}
+          />
+          {error && <p style={{ color: '#C42230', fontSize: 13, marginBottom: 8 }}>パスワードが違います</p>}
+          <button type="submit" style={{
+            width: '100%', padding: '12px', fontSize: 15, fontWeight: 700,
+            background: '#C42230', color: '#fff', border: 'none',
+            borderRadius: 8, cursor: 'pointer', marginTop: 4,
+          }}>
+            入る
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── 利用回数制限（localStorage） ─────────────────────────────────────────────
 const USAGE_KEY = 'archi_usage'
 const getToday  = () => new Date().toISOString().slice(0, 10)
@@ -252,6 +308,20 @@ function LogoMark({ size = 55 }) {
   )
 }
 
+function AppHeader() {
+  return (
+    <header className="app-header">
+      <div className="logo">
+        <LogoMark />
+        <div className="logo-info">
+          <span className="logo-title">Archi AI</span>
+          <span className="logo-sub">家づくりの不安をワンタップで可視化</span>
+        </div>
+      </div>
+    </header>
+  )
+}
+
 // ─── ファイルスロット ──────────────────────────────────────────────────────────
 
 function resolveFileType(f) {
@@ -363,8 +433,14 @@ export default function App() {
   const [paymentDone, setPaymentDone]         = useState(null) // 'architect' | 'ai' | null
   // APIキー未設定時のモックモード（利用回数制限なし）
   const [mockMode, setMockMode]               = useState(false)
+  // テスト用パスワード認証
+  const [authenticated, setAuthenticated]     = useState(() => {
+    try { return sessionStorage.getItem(TEST_AUTH_KEY) === '1' } catch { return false }
+  })
+  // テストモード = 認証済み（支払い・制限なし）
+  const testMode = authenticated
   // 診断結果別画面
-  const [resultsView, setResultsView]         = useState(null) // null | 'free' | 'detail'
+  const [resultsView, setResultsView]         = useState(null) // null | 'free' | 'detail' | 'ai-loading'
 
   // スプラッシュ＋スクロール復元防止
   useEffect(() => {
@@ -374,6 +450,11 @@ export default function App() {
     const t2 = setTimeout(() => setSplash('done'), 4000)
     return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [])
+
+  // 別画面（結果）表示時はトップへ
+  useEffect(() => {
+    if (resultsView !== null) window.scrollTo(0, 0)
+  }, [resultsView])
 
   // reCAPTCHA 初期化
   useEffect(() => {
@@ -395,8 +476,35 @@ export default function App() {
       setPaymentDone('architect')
       window.history.replaceState({}, '', '/')
     } else if (params.get('payment') === 'ai-success') {
-      setPaymentDone('ai')
+      const did = params.get('did')
       window.history.replaceState({}, '', '/')
+      if (did) {
+        // 決済後即時診断：保存したファイルで診断実行
+        setResultsView('ai-loading')
+        setIsDetailLoading(true)
+        setLoadingMsg(DETAIL_LOADING_MESSAGES[0])
+        setLoadingPct(5)
+        fetch(`/api/diagnose/detail-by-id/${did}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) throw new Error(data.error)
+            setLoadingPct(100)
+            setTimeout(() => {
+              saveDetailToStorage(data, null, null)
+              setDetailDiagnosis(data)
+              setResultsView('detail')
+              setIsDetailLoading(false)
+            }, 600)
+          })
+          .catch(err => {
+            setError(err.message)
+            setResultsView(null)
+            setIsDetailLoading(false)
+            setPaymentDone('ai') // フォールバック：従来の完了画面
+          })
+      } else {
+        setPaymentDone('ai')
+      }
     }
   }, [])
 
@@ -406,9 +514,10 @@ export default function App() {
     const msgs = isDetailLoading ? DETAIL_LOADING_MESSAGES : LOADING_MESSAGES
     let i = 0
     const iv = setInterval(() => {
-      i = (i + 1) % msgs.length
+      i = Math.min(i + 1, msgs.length - 1)
       setLoadingMsg(msgs[i])
       setLoadingPct(Math.round(((i + 1) / msgs.length) * 90))
+      if (i === msgs.length - 1) clearInterval(iv)
     }, 1400)
     return () => clearInterval(iv)
   }, [isLoading, isDetailLoading])
@@ -455,7 +564,7 @@ export default function App() {
       return
     }
     // 無料診断：1日1回制限チェック（モックモード時はスキップ）
-    if (selectedPlan === 'free' && !mockMode && !checkDailyLimit()) {
+    if (selectedPlan === 'free' && !mockMode && !testMode && !checkDailyLimit()) {
       setError('本日の無料診断は上限に達しました。明日またお試しください。')
       return
     }
@@ -477,11 +586,15 @@ export default function App() {
       const res = await fetch(isDetail ? '/api/diagnose/detail' : '/api/diagnose', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
-      if (selectedPlan === 'free' && !mockMode) recordUsage()
+      if (selectedPlan === 'free' && !mockMode && !testMode) recordUsage()
       setLoadingPct(100)
       setTimeout(() => {
-        if (isDetail) { setDetailDiagnosis(data); setResultsView('detail') }
-        else { setDiagnosis(data); setResultsView('free') }
+        if (isDetail) {
+          saveDetailToStorage(data, null, null)
+          setDetailDiagnosis(data); setResultsView('detail')
+        } else {
+          setDiagnosis(data); setResultsView('free')
+        }
         setIsLoading(false)
         setIsDetailLoading(false)
       }, 400)
@@ -492,10 +605,66 @@ export default function App() {
     }
   }
 
+  // localStorage に詳細診断結果を保存（後から見れる機能）
+  const saveDetailToStorage = (result, freeDiag, bInfo) => {
+    try {
+      localStorage.setItem('archi_last_detail', JSON.stringify({
+        result,
+        freeDiagnosis: freeDiag ?? diagnosis,
+        basicInfo:     bInfo    ?? basicInfo,
+        savedAt: Date.now(),
+      }))
+    } catch {}
+  }
+
+  // 前回の詳細診断結果を localStorage から復元
+  const handleViewSaved = () => {
+    try {
+      const s = localStorage.getItem('archi_last_detail')
+      if (!s) return
+      const { result, freeDiagnosis: fd, basicInfo: bi } = JSON.parse(s)
+      if (!result) return
+      if (fd) setDiagnosis(fd)
+      if (bi) setBasicInfo(bi)
+      setDetailDiagnosis(result)
+      setResultsView('detail')
+    } catch {}
+  }
+
   const handleAiPaySubmit = async (form) => {
-    const fd = new FormData()
-    fd.append('name', form.name)
-    fd.append('email', form.email)
+    if (mockMode || testMode) {
+      // モック/テストモード：決済不要、その場で診断実行
+      setIsDetailLoading(true)
+      setResultsView('ai-loading')
+      setLoadingMsg(DETAIL_LOADING_MESSAGES[0])
+      setLoadingPct(5)
+      ;(async () => {
+        try {
+          const fd = buildFormData()
+          const token = await getRecaptchaToken(recaptchaSiteKey, 'diagnose')
+          if (token) fd.append('recaptchaToken', token)
+          const res = await fetch('/api/diagnose/detail', { method: 'POST', body: fd })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
+          setLoadingPct(100)
+          await new Promise(r => setTimeout(r, 600))
+          saveDetailToStorage(data, null, null)
+          setDetailDiagnosis(data)
+          setResultsView('detail')
+        } catch (err) {
+          setError(err.message)
+          setResultsView(null)
+        } finally {
+          setIsDetailLoading(false)
+        }
+      })()
+      return
+    }
+
+    // 本番Stripeモード：ファイルも送りIDを取得、決済後に即時診断
+    const fd = buildFormData()
+    fd.append('name',      form.name)
+    fd.append('email',     form.email)
     fd.append('structure', basicInfo.structure || '')
     fd.append('floors',    basicInfo.floors    || '')
     const res = await fetch('/api/create-ai-checkout-session', { method: 'POST', body: fd })
@@ -531,18 +700,22 @@ export default function App() {
 
   const withConsent = (plan, action) => setConsentModal({ plan, action })
 
-  // ─── ヘッダー共通JSX ─────────────────────────────────────────────────────────
-  const AppHeader = () => (
-    <header className="app-header">
-      <div className="logo">
-        <LogoMark />
-        <div className="logo-info">
-          <span className="logo-title">Archi AI</span>
-          <span className="logo-sub">家づくりの不安をワンタップで可視化</span>
-        </div>
-      </div>
-    </header>
-  )
+  // パスワード未認証の場合はゲート表示
+  if (!authenticated) {
+    return <PasswordGate onAuth={() => setAuthenticated(true)} />
+  }
+
+  // AI詳細診断 ローディング画面（モックモード即時診断 / Stripe決済後）
+  if (resultsView === 'ai-loading') {
+    return (
+      <div className="app"><div className="app-content app-content--visible">
+        <AppHeader />
+        <main className="app-main">
+          <LoadingScreen message={loadingMsg} pct={loadingPct} title="AI詳細診断中..." />
+        </main>
+      </div></div>
+    )
+  }
 
   // 診断結果 別画面（無料）
   if (resultsView === 'free' && diagnosis) {
@@ -554,8 +727,8 @@ export default function App() {
             diagnosis={diagnosis}
             basicInfo={basicInfo}
             onReset={handleReset}
-            onDetailDiagnose={() => { setResultsView(null); goTo('results', 'ai-pay') }}
-            onConsult={() => { setResultsView(null); withConsent('architect', () => goTo('results', 'consult')) }}
+            onDetailDiagnose={() => { window.scrollTo(0, 0); setResultsView(null); goTo('results', 'ai-pay') }}
+            onConsult={() => { window.scrollTo(0, 0); setResultsView(null); withConsent('architect', () => goTo('results', 'consult')) }}
             error={error}
           />
         </main>
@@ -574,7 +747,7 @@ export default function App() {
             freeDiagnosis={diagnosis}
             onScreenRef={null}
             onReset={handleReset}
-            onConsult={() => { setResultsView(null); withConsent('architect', () => goTo('results', 'consult')) }}
+            onConsult={() => { window.scrollTo(0, 0); setResultsView(null); withConsent('architect', () => goTo('results', 'consult')) }}
             onBack={() => setResultsView('free')}
           />
         </main>
@@ -651,7 +824,7 @@ export default function App() {
 
           {/* ── ① ランディング ── */}
           <section id="landing" className="app-section">
-            <LandingScreen onStart={() => goTo('landing', 'info')} />
+            <LandingScreen onStart={() => goTo('landing', 'info')} onViewSaved={handleViewSaved} />
           </section>
 
           {/* ── ② 基本情報 ── */}
@@ -750,7 +923,12 @@ export default function App() {
               <SectionDivider label="一級建築士に相談する" />
               <ConsultScreen
                 onSubmit={handleConsultSubmit}
-                onBackId={has('results') ? 'results' : 'preview'}
+                onBackId={!diagnosis && !detailDiagnosis ? 'preview' : null}
+                onBack={
+                  detailDiagnosis ? () => setResultsView('detail') :
+                  diagnosis       ? () => setResultsView('free')   :
+                  null
+                }
                 selectedPlan={selectedPlan}
                 basicInfo={basicInfo}
                 primaryFile={primaryFile}
@@ -799,7 +977,17 @@ function ConsentModal({ plan, onAgree, onCancel }) {
 
 // ─── ランディング画面 ──────────────────────────────────────────────────────────
 
-function LandingScreen({ onStart }) {
+function LandingScreen({ onStart, onViewSaved }) {
+  const [hasSaved, setHasSaved] = useState(false)
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem('archi_last_detail')
+      if (!s) return
+      const { savedAt } = JSON.parse(s)
+      if (savedAt && Date.now() - savedAt < 30 * 24 * 60 * 60 * 1000) setHasSaved(true)
+    } catch {}
+  }, [])
+
   return (
     <div className="screen">
       <div className="landing-hero">
@@ -828,6 +1016,11 @@ function LandingScreen({ onStart }) {
 
       <button className="btn-primary btn-start" onClick={onStart}>診断を始める</button>
       <p className="landing-free-note">まずは無料で試せます</p>
+      {hasSaved && onViewSaved && (
+        <button className="btn-ghost" style={{ marginTop: 10 }} onClick={onViewSaved}>
+          前回のAI詳細診断結果を見る
+        </button>
+      )}
     </div>
   )
 }
@@ -1259,7 +1452,7 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
 
 // ─── 建築士相談 フォーム ───────────────────────────────────────────────────────
 
-function ConsultScreen({ onSubmit, onBackId, selectedPlan, basicInfo, primaryFile }) {
+function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, primaryFile }) {
   const [form, setForm]       = useState({ name: '', email: '', message: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
@@ -1368,7 +1561,7 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo }) {
           {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥500）'}
         </button>
       </form>
-      <BackButton targetId={onBackId} label="戻る" />
+      <BackButton targetId={onBackId} onClick={onBack} label="戻る" />
     </div>
   )
 }
