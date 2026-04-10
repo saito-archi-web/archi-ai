@@ -294,7 +294,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',  // AI詳細診断：高品質
-      max_tokens: 2000,
+      max_tokens: 4000,
       messages: [
         {
           role: 'user',
@@ -312,7 +312,14 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
       return res.status(500).json({ error: 'AIの応答形式が不正でした。再度お試しください。' });
     }
 
-    const result = JSON.parse(jsonMatch[0]);
+    let result;
+    try {
+      result = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      console.error('JSON parse error:', parseErr.message);
+      console.error('Response length:', responseText.length);
+      return res.status(500).json({ error: 'AIの応答の解析に失敗しました。再度お試しください。' });
+    }
     res.json(result);
   } catch (err) {
     console.error('詳細診断エラー:', err);
@@ -443,14 +450,16 @@ app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
   try {
     const fileBlocks = buildFileContentBlocks(entry.files);
     const message = await client.messages.create({
-      model: 'claude-opus-4-5',
-      max_tokens: 2000,
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
       messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: DETAIL_PROMPT }] }],
     });
     const responseText = message.content[0].text.trim();
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return res.status(500).json({ error: 'AIの応答形式が不正でした。再度お試しください。' });
-    const result = JSON.parse(jsonMatch[0]);
+    let result;
+    try { result = JSON.parse(jsonMatch[0]); }
+    catch { return res.status(500).json({ error: 'AIの応答の解析に失敗しました。再度お試しください。' }); }
     entry.result = result; // キャッシュ
     res.json(result);
   } catch (err) {
