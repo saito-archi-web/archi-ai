@@ -126,7 +126,7 @@ const BUDGET_OPTIONS    = ['〜2,000万', '2,000万〜3,000万', '3,000万〜4,0
 
 const CHECK_ITEMS = [
   { key: 'direction', label: '方位（北の向き）が記載されている',         note: '採光・日当たりの判定に使用します',            required: true  },
-  { key: 'rooms',     label: '部屋名・用途が確認できる',                  note: 'LDK、洗面所、寝室などの表記があるか',          required: true  },
+  { key: 'rooms',     label: '部屋名・用途が確認できる',                  note: 'LDK、洗面所、寝室などの表記があるか、読み取れるか',          required: true  },
   { key: 'scale',     label: '縮尺または部屋の帖数が記載されている',       note: '空間バランスの評価精度が向上します',            required: true  },
   { key: 'allFloors', label: '全フロアの平面図がそろっている',             note: '複数階の場合、全フロア分があると精度が上がります', required: false },
   { key: 'site',      label: '敷地・建物の向きが確認できる',               note: '配置図や外形がわかる資料',                    required: false },
@@ -1075,6 +1075,9 @@ function PlanSelectScreen({ selectedPlan, onChange, onNext, onBackId }) {
             <ul className="plan-features">
               {plan.features.map((f, i) => <li key={i}>{f}</li>)}
             </ul>
+            {plan.id === 'ai' && (
+              <p className="plan-ai-note">無料版に比べて高性能なAIを採用しています</p>
+            )}
             {selectedPlan === plan.id && <div className="plan-selected-mark">選択中</div>}
           </div>
         ))}
@@ -1148,6 +1151,7 @@ function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBackId,
   const notices = [
     ...(isFree ? ['本診断は一般的な観点に基づく参考情報です。個別の条件や詳細な図面情報を反映した精度には限りがあります。'] : []),
     ...(isAI   ? ['AI が画像を読み取り分析します。文字・寸法・記号が不鮮明な場合、正確に認識できず結果に影響することがあります。'] : []),
+    '間取り図以外の関係のない画像が添付された場合は、適切な評価ができません。',
     'AI による診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。',
     ...(isArchitect ? ['本相談は設計業務ではありません。診断・アドバイスの内容に設計上の責任は負いかねます。'] : []),
   ]
@@ -1331,6 +1335,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         </div>
         <p className="premium-note">※ 設計責任は負いません。あくまで参考意見としてご活用ください。</p>
       </div>
+      <p className="result-storage-note screenshot-hide">この診断結果は同じ端末・ブラウザであれば３０日間は見ることができます。</p>
       <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
         {saving ? '保存中...' : '診断結果を画像で保存'}
       </button>
@@ -1342,7 +1347,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
 // ─── AI詳細診断 結果画面 ───────────────────────────────────────────────────────
 
 function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onBack }) {
-  const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict } = detail
+  const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict, good_points = [] } = detail
   const screenRef = useRef(null)
   const [saving, setSaving] = useState(false)
 
@@ -1418,6 +1423,20 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
           <h3 className="section-title">AIからの verdict</h3>
           <div className="verdict-card"><p className="verdict-text">{verdict}</p></div>
           <p className="supervisor-caption">※ 診断基準は一級建築士が監修しています</p>
+        </div>
+      )}
+
+      {good_points.length > 0 && (
+        <div className="section">
+          <h3 className="section-title title-good">この間取りの良い点</h3>
+          <div className="good-points-card">
+            {good_points.map((p, i) => (
+              <div key={i} className="good-point-row">
+                <span className="good-point-icon">✓</span>
+                <span>{p}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

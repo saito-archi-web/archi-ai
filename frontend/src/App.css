@@ -824,6 +824,30 @@ body {
 
 .stress-icon { font-size: 16px; flex-shrink: 0; }
 
+/* 良い点 */
+.good-points-card {
+  background: var(--white);
+  border-radius: var(--r);
+  padding: 11px 16px;
+  box-shadow: var(--shadow);
+  border-left: 4px solid var(--good);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.good-point-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.good-point-icon {
+  color: var(--good);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
 /* 詳細改善提案 */
 .suggestion-list { display: flex; flex-direction: column; gap: 11px; }
 
@@ -1604,6 +1628,13 @@ body {
   border-radius: 0;
 }
 
+.plan-ai-note {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 400;
+  margin-top: 6px;
+}
+
 .plan-disclaimer {
   font-size: 11px;
   color: var(--muted);
@@ -1669,6 +1700,14 @@ body {
   color: var(--muted);
   margin-top: 8px;
   padding-left: 2px;
+}
+
+.result-storage-note {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  margin-top: 4px;
+  margin-bottom: 4px;
 }
 
 /* ─── 建築士相談フォーム 追加要素 ────────────────────────────────────────────── */

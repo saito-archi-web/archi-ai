@@ -15,7 +15,9 @@
       "Bash(cmd /c \"python --version\")",
       "Bash(python generate_entourage.py)",
       "Bash(python -c \"import ezdxf; print\\(ezdxf.__version__\\)\")",
-      "Bash(cmd /c \"python -c \"\"import ezdxf; print\\(ezdxf.__version__\\)\"\"\")"
+      "Bash(cmd /c \"python -c \"\"import ezdxf; print\\(ezdxf.__version__\\)\"\"\")",
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(git add:*)"
     ]
   },
   "hooks": {
