@@ -139,7 +139,7 @@ const PLANS = [
   },
   {
     id: 'ai', name: 'AI詳細診断', price: '¥500', tag: '人気', tagBg: '#FF6B35',
-    features: ['無料診断の全項目', '優先度付き問題点リスト（最大5件）', '「住んでから気づく」生活ストレス予測', 'コスト感付きの具体的改善策', '診断後に一級建築士相談に進める'],
+    features: ['無料診断の全項目', '優先度付き問題点リスト（最大5件）', '「住んでから気づく」生活ストレス予測', 'コスト感付きの具体的改善策', 'ピンポイント質疑応答（1問）', '診断後に一級建築士相談に進める'],
   },
   {
     id: 'architect', name: '一級建築士相談', price: '¥3,000', tag: '最高精度', tagBg: '#3B82F6',
@@ -641,6 +641,7 @@ export default function App() {
       ;(async () => {
         try {
           const fd = buildFormData()
+          if (form.question?.trim()) fd.append('question', form.question.trim())
           const token = await getRecaptchaToken(recaptchaSiteKey, 'diagnose')
           if (token) fd.append('recaptchaToken', token)
           const res = await fetch('/api/diagnose/detail', { method: 'POST', body: fd })
@@ -667,6 +668,7 @@ export default function App() {
     fd.append('email',     form.email)
     fd.append('structure', basicInfo.structure || '')
     fd.append('floors',    basicInfo.floors    || '')
+    if (form.question?.trim()) fd.append('question', form.question.trim())
     const res = await fetch('/api/create-ai-checkout-session', { method: 'POST', body: fd })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error)
@@ -1315,6 +1317,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
             <li>優先順位付きの問題点リスト（最大5件）</li>
             <li>「住んでから気づく」生活ストレスの予測</li>
             <li>コスト感付きの具体的改善提案</li>
+            <li>ピンポイント質疑応答（1問）</li>
           </ul>
           <button className="btn-premium-orange" onClick={onDetailDiagnose}>AI詳細診断を見る（¥500）</button>
         </div>
@@ -1347,7 +1350,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
 // ─── AI詳細診断 結果画面 ───────────────────────────────────────────────────────
 
 function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onBack }) {
-  const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict, good_points = [] } = detail
+  const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict, good_points = [], user_question, user_question_answer } = detail
   const screenRef = useRef(null)
   const [saving, setSaving] = useState(false)
 
@@ -1436,6 +1439,22 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
                 <span>{p}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {user_question && user_question_answer && (
+        <div className="section">
+          <h3 className="section-title title-question">ご質問への回答</h3>
+          <div className="question-card">
+            <div className="question-row">
+              <span className="question-icon">Q</span>
+              <span className="question-text">{user_question}</span>
+            </div>
+            <div className="answer-row">
+              <span className="answer-icon">A</span>
+              <span className="answer-text">{user_question_answer}</span>
+            </div>
           </div>
         </div>
       )}
@@ -1534,7 +1553,7 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
 // ─── AI詳細診断 支払い画面 ────────────────────────────────────────────────────
 
 function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo }) {
-  const [form, setForm]       = useState({ name: '', email: '' })
+  const [form, setForm]       = useState({ name: '', email: '', question: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
 
@@ -1555,7 +1574,7 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo }) {
 
       <div className="consult-info-card">
         <p className="consult-info-title">サービス内容</p>
-        {['無料診断の全項目','優先度付き問題点リスト（最大5件）','「住んでから気づく」生活ストレス予測','コスト感付きの具体的改善策'].map((t,i)=>(
+        {['無料診断の全項目','優先度付き問題点リスト（最大5件）','「住んでから気づく」生活ストレス予測','コスト感付きの具体的改善策','ピンポイント質疑応答（1問）'].map((t,i)=>(
           <div key={i} className="consult-info-row"><span className="consult-info-icon">✓</span><span>{t}</span></div>
         ))}
         <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥500（税込）</span></div>
@@ -1567,6 +1586,22 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo }) {
 
       <form className="consult-form" onSubmit={handleSubmit} noValidate>
         <h3 className="form-title">お申し込み情報</h3>
+        <div className="form-field">
+          <label className="form-label" htmlFor="ai-question">
+            気になっている点を教えてください <span className="form-optional">任意・100文字以内</span>
+          </label>
+          <textarea
+            id="ai-question"
+            name="question"
+            className="form-input form-textarea"
+            placeholder="例：リビングが狭く感じないか心配です。子供部屋の位置は適切でしょうか。"
+            maxLength={100}
+            rows={3}
+            value={form.question}
+            onChange={e => setForm({ ...form, question: e.target.value })}
+          />
+          <p className="form-char-count">{form.question.length} / 100文字</p>
+        </div>
         <div className="form-field">
           <label className="form-label" htmlFor="ai-name">お名前 <span className="form-required">必須</span></label>
           <input id="ai-name" name="name" type="text" className="form-input" placeholder="山田 太郎" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} />

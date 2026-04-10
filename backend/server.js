@@ -260,9 +260,21 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
 });
 
 // ─── AI詳細診断プロンプト ──────────────────────────────────────────────────────
-const DETAIL_PROMPT = `あなたは経験豊富な住宅建築士です。
-この間取り図に対して、無料診断より踏み込んだ「有料レベルの詳細診断」を行ってください。
+function buildDetailPrompt(question) {
+  const hasQ = question && question.trim();
+  const questionSection = hasQ
+    ? `\n【ユーザーからの質問】\n「${question.trim()}」\nこの質問に対して、間取り図を踏まえた上で具体的に回答してください。回答はuser_question_answerフィールドに150字以内で記載してください。\n`
+    : '';
+  const questionOutput = hasQ
+    ? '\n6. user_question: ユーザーの質問をそのまま転記\n7. user_question_answer: 質問への回答（150字以内）'
+    : '';
+  const questionJson = hasQ
+    ? ',"user_question":"質問テキスト","user_question_answer":"回答テキスト"'
+    : '';
 
+  return `あなたは経験豊富な住宅建築士です。
+この間取り図に対して、無料診断より踏み込んだ「有料レベルの詳細診断」を行ってください。
+${questionSection}
 【評価の注意事項】
 - 問題点の深刻度は実際の配置関係を正確に読み取って判断すること
 - 部屋が「はす向かい（斜め対面）」の場合や「廊下を挟んでいる」場合は、直接隣接より影響が軽減されるため、優先度を下げるか問題点から外すこと
@@ -275,12 +287,13 @@ const DETAIL_PROMPT = `あなたは経験豊富な住宅建築士です。
 2. life_stress: この間取りで実際に生活したときに感じるストレスを4〜6個。「〇〇するたびに〜」「毎日〜が不便」など具体的な表現で
 3. detailed_suggestions: 改善提案を3〜5個。area（対象エリア）、action（具体的な改善策）、reason（理由）、cost_hint（"低コスト" / "中程度の工事" / "設計変更必要" のいずれか）
 4. verdict: このリスクの総合評価。「このまま建てると〜」という形式で120字以内
-5. good_points: この間取りの優れている点を2つ。簡潔に1〜2文で述べる
+5. good_points: この間取りの優れている点を2つ。簡潔に1〜2文で述べる${questionOutput}
 
 【出力形式】
 以下のJSONのみ出力してください。説明文・マークダウン・コードブロックは不要：
 
-{"priority_issues":[{"rank":1,"title":"問題名","detail":"詳細説明","impact":"生活への影響"}],"life_stress":["ストレス1","ストレス2"],"detailed_suggestions":[{"area":"エリア名","action":"改善策","reason":"理由","cost_hint":"低コスト"}],"verdict":"総合評価","good_points":["良い点1","良い点2"]}`;
+{"priority_issues":[{"rank":1,"title":"問題名","detail":"詳細説明","impact":"生活への影響"}],"life_stress":["ストレス1","ストレス2"],"detailed_suggestions":[{"area":"エリア名","action":"改善策","reason":"理由","cost_hint":"低コスト"}],"verdict":"総合評価","good_points":["良い点1","良い点2"]${questionJson}}`;
+}
 
 // ─── AI詳細診断エンドポイント ──────────────────────────────────────────────────
 app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
@@ -302,6 +315,8 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
     }
 
     const fileBlocks = buildFileContentBlocks(files);
+    const question = req.body?.question || '';
+    const prompt = buildDetailPrompt(question);
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',  // AI詳細診断：高品質
@@ -311,7 +326,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
           role: 'user',
           content: [
             ...fileBlocks,
-            { type: 'text', text: DETAIL_PROMPT },
+            { type: 'text', text: prompt },
           ],
         },
       ],
@@ -407,8 +422,9 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
     // ファイルを一時保存（決済後の即時診断用）
     const diagnosisId = crypto.randomUUID();
     const files = req.files || [];
+    const question = req.body?.question || '';
     if (files.length > 0) {
-      tempDiagnosisStore.set(diagnosisId, { files, result: null, timestamp: Date.now() });
+      tempDiagnosisStore.set(diagnosisId, { files, question, result: null, timestamp: Date.now() });
     }
     const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
 
@@ -463,7 +479,7 @@ app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: DETAIL_PROMPT }] }],
+      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: buildDetailPrompt(entry.question || '') }] }],
     });
     const responseText = message.content[0].text.trim();
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);

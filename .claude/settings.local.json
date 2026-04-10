@@ -17,7 +17,8 @@
       "Bash(python -c \"import ezdxf; print\\(ezdxf.__version__\\)\")",
       "Bash(cmd /c \"python -c \"\"import ezdxf; print\\(ezdxf.__version__\\)\"\"\")",
       "Bash(curl -s http://localhost:5173/)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(powershell -Command \"Get-Content 'C:\\\\Users\\\\saito\\\\OneDrive\\\\H-One_家づくりの不安をワンタップで可視化\\\\backend\\\\server.js' | Select-Object -Skip 262 -First 25\")"
     ]
   },
   "hooks": {
