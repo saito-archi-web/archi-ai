@@ -203,7 +203,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
     const fileBlocks = buildFileContentBlocks(files);
 
     const message = await client.messages.create({
-      model: 'claude-3-haiku-20240307',  // 無料診断：低コスト
+      model: 'claude-haiku-4-5-20251001',  // 無料診断：低コスト
       max_tokens: 1500,
       messages: [
         {
@@ -293,7 +293,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
     const fileBlocks = buildFileContentBlocks(files);
 
     const message = await client.messages.create({
-      model: 'claude-3-5-sonnet-20241022',  // AI詳細診断：高品質
+      model: 'claude-sonnet-4-6',  // AI詳細診断：高品質
       max_tokens: 2000,
       messages: [
         {
