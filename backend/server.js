@@ -401,7 +401,7 @@ app.post('/api/validate-coupon', express.json(), (req, res) => {
 });
 
 // ─── Stripe 決済セッション作成 ────────────────────────────────────────────────
-app.post('/api/create-checkout-session', upload.none(), async (req, res) => {
+app.post('/api/create-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
     const { name, email, message, structure, floors, familySize, ageGroup, price, couponCode } = req.body;
     if (!name || !email) {
