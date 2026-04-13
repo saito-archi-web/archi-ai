@@ -450,6 +450,7 @@ export default function App() {
   // 法的ページモーダル
   const [showTokusho, setShowTokusho]         = useState(false)
   const [showPrivacy, setShowPrivacy]         = useState(false)
+  const [showSupervisor, setShowSupervisor]   = useState(false)
 
   // スプラッシュ＋スクロール復元防止
   useEffect(() => {
@@ -729,13 +730,14 @@ export default function App() {
   if (resultsView === 'ai-loading') {
     return (
       <div className="app"><div className="app-content app-content--visible">
-        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
-        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
+        {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
+        {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
+        {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         <AppHeader />
         <main className="app-main">
           <LoadingScreen message={loadingMsg} pct={loadingPct} title="AI詳細診断中..." />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
       </div></div>
     )
   }
@@ -744,8 +746,9 @@ export default function App() {
   if (resultsView === 'free' && diagnosis) {
     return (
       <div className="app"><div className="app-content app-content--visible">
-        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
-        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
+        {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
+        {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
+        {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         <AppHeader />
         <main className="app-main">
           <ResultsScreen
@@ -757,7 +760,7 @@ export default function App() {
             error={error}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
       </div></div>
     )
   }
@@ -766,8 +769,9 @@ export default function App() {
   if (resultsView === 'consult-from-detail') {
     return (
       <div className="app"><div className="app-content app-content--visible">
-        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
-        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
+        {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
+        {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
+        {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         <AppHeader />
         <main className="app-main">
           <ConsultScreen
@@ -778,7 +782,7 @@ export default function App() {
             fromAiDiagnosis={true}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
       </div></div>
     )
   }
@@ -786,8 +790,9 @@ export default function App() {
   if (resultsView === 'detail' && detailDiagnosis) {
     return (
       <div className="app"><div className="app-content app-content--visible">
-        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
-        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
+        {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
+        {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
+        {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         <AppHeader />
         <main className="app-main">
           <DetailScreen
@@ -799,7 +804,7 @@ export default function App() {
             onBack={() => setResultsView('free')}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
       </div></div>
     )
   }
@@ -808,8 +813,9 @@ export default function App() {
   if (paymentDone) {
     return (
       <div className="app">
-        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
-        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
+        {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
+        {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
+        {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -842,7 +848,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
       </div>
     )
   }
@@ -862,8 +868,9 @@ export default function App() {
             onCancel={() => setConsentModal(null)}
           />
         )}
-        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
-        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
+        {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
+        {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
+        {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -992,7 +999,7 @@ export default function App() {
           )}
 
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
       </div>
     </div>
   )
@@ -1068,12 +1075,6 @@ function LandingScreen({ onStart, onViewSaved }) {
             </div>
           </div>
         ))}
-      </div>
-
-      <div className="supervisor-badge">
-        <span className="supervisor-badge-label">診断基準 監修</span>
-        <span className="supervisor-badge-name">一級建築士　齋藤泰地</span>
-        <span className="supervisor-badge-no">登録番号：○○号</span>
       </div>
 
       <button className="btn-primary btn-start" onClick={onStart}>診断を始める</button>
@@ -1216,6 +1217,7 @@ function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBackId,
     '間取り図以外の関係のない画像が添付された場合は、適切な評価ができません。',
     'AI による診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。',
     ...(isArchitect ? ['本相談は設計業務ではありません。診断・アドバイスの内容に設計上の責任は負いかねます。'] : []),
+    ...(!isFree ? ['デジタルコンテンツの性質上、決済完了後のキャンセル・返金はお受けできません。サービスに重大な瑕疵があった場合はご相談ください。'] : []),
   ]
 
   return (
@@ -1750,7 +1752,7 @@ function TokushoModal({ onClose }) {
             <tbody>
               <tr><th>販売業者</th><td>齋藤泰地</td></tr>
               <tr><th>代表者</th><td>齋藤泰地</td></tr>
-              <tr><th>所在地</th><td>○○（お問い合わせいただいた場合は遅滞なく開示いたします）</td></tr>
+              <tr><th>所在地</th><td>お問い合わせいただいた場合に遅滞なく開示いたします</td></tr>
               <tr><th>電話番号</th><td>お問い合わせいただいた場合は遅滞なく開示いたします</td></tr>
               <tr><th>メールアドレス</th><td>ArchiAI@outlook.jp</td></tr>
               <tr><th>サービス名</th><td>ArchiAI 間取り診断</td></tr>
@@ -1814,7 +1816,7 @@ function PrivacyModal({ onClose }) {
           <p className="legal-section-title">6. お問い合わせ</p>
           <p className="legal-text">個人情報に関するお問い合わせは <strong>ArchiAI@outlook.jp</strong> までご連絡ください。</p>
 
-          <p className="legal-footer-note">制定日：2025年4月</p>
+          <p className="legal-footer-note">制定日：2026年4月</p>
         </div>
       </div>
     </div>
@@ -1823,13 +1825,15 @@ function PrivacyModal({ onClose }) {
 
 // ─── フッター ─────────────────────────────────────────────────────────────────
 
-function AppFooter({ onTokusho, onPrivacy }) {
+function AppFooter({ onTokusho, onPrivacy, onSupervisor }) {
   return (
     <footer className="app-footer">
       <div className="footer-links">
         <button className="footer-link" onClick={onTokusho}>特定商取引法に基づく表記</button>
         <span className="footer-sep">|</span>
         <button className="footer-link" onClick={onPrivacy}>プライバシーポリシー</button>
+        <span className="footer-sep">|</span>
+        <button className="footer-link" onClick={onSupervisor}>監修者について</button>
         <span className="footer-sep">|</span>
         <a className="footer-link" href="mailto:ArchiAI@outlook.jp">お問い合わせ</a>
       </div>
@@ -1838,7 +1842,33 @@ function AppFooter({ onTokusho, onPrivacy }) {
         <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>と
         <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">利用規約</a>が適用されます。
       </p>
-      <p className="footer-copy">© 2025 ArchiAI. All rights reserved.</p>
+      <p className="footer-copy">© 2026 ArchiAI. All rights reserved.</p>
     </footer>
+  )
+}
+
+// ─── 監修者情報モーダル ────────────────────────────────────────────────────────
+
+function SupervisorModal({ onClose }) {
+  return (
+    <div className="legal-modal-overlay" onClick={onClose}>
+      <div className="legal-modal" onClick={e => e.stopPropagation()}>
+        <button className="legal-modal-close" onClick={onClose}>×</button>
+        <h2 className="legal-modal-title">監修者について</h2>
+        <div className="legal-modal-body">
+          <table className="legal-table">
+            <tbody>
+              <tr><th>氏名</th><td>齋藤泰地</td></tr>
+              <tr><th>資格</th><td>一級建築士</td></tr>
+              <tr><th>登録番号</th><td>○○号</td></tr>
+              <tr><th>監修内容</th><td>診断基準（評価項目・採点ロジック・AIプロンプト）の設計・監修</td></tr>
+            </tbody>
+          </table>
+          <p className="legal-text" style={{ marginTop: 12 }}>
+            本サービスの診断基準は、一級建築士である齋藤泰地が住宅設計の専門的知見に基づき設計・監修しています。ただし、AI診断は参考情報であり、設計上の責任を負うものではありません。
+          </p>
+        </div>
+      </div>
+    </div>
   )
 }
