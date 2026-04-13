@@ -119,7 +119,7 @@ const COST_COLORS = {
 }
 
 const STRUCTURE_OPTIONS = ['木造', '鉄骨造', '鉄筋コンクリート造', 'わからない']
-const FLOOR_OPTIONS     = ['平屋', '2階建て', '3階建て以上']
+const FLOOR_OPTIONS     = ['平屋', '2階建て', '3階建て']
 const FAMILY_OPTIONS    = ['1人', '2人', '3人', '4人', '5人以上']
 const AGE_OPTIONS       = ['20代', '30代', '40代', '50代', '60代以上']
 const BUDGET_OPTIONS    = ['〜2,000万', '2,000万〜3,000万', '3,000万〜4,000万', '5,000万〜6,000万', '6,000万〜8,000万', '8,000万以上']
@@ -149,7 +149,7 @@ const PLANS = [
 
 // ファイルスロット定義
 const getFileSlots = (floors) => {
-  const floorCount = floors === '平屋' ? 1 : floors === '2階建て' ? 2 : floors === '3階建て以上' ? 3 : 1
+  const floorCount = floors === '平屋' ? 1 : floors === '2階建て' ? 2 : floors === '3階建て' ? 3 : 1
   const planSlots = Array.from({ length: floorCount }, (_, i) => ({
     key: `floor${i}`,
     label: floorCount === 1 ? '平面図' : `${i + 1}F 平面図`,
@@ -482,7 +482,10 @@ export default function App() {
   // 決済完了リダイレクト検出
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('payment') === 'success') {
+    if (params.get('payment') === 'cancel') {
+      setPaymentDone('cancel')
+      window.history.replaceState({}, '', '/')
+    } else if (params.get('payment') === 'success') {
       setPaymentDone('architect')
       window.history.replaceState({}, '', '/')
     } else if (params.get('payment') === 'ai-success') {
@@ -693,7 +696,7 @@ export default function App() {
   }
 
   const handleConsultSubmit = async (form) => {
-    const fd = new FormData()
+    const fd = buildFormData() // ← ファイルも含める
     fd.append('name', form.name)
     fd.append('email', form.email)
     fd.append('message', form.message || '')
@@ -809,8 +812,9 @@ export default function App() {
     )
   }
 
-  // 決済完了ページ（Stripeリダイレクト後）
+  // 決済完了・キャンセルページ（Stripeリダイレクト後）
   if (paymentDone) {
+    const isCancel = paymentDone === 'cancel'
     return (
       <div className="app">
         {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
@@ -828,22 +832,35 @@ export default function App() {
         <main className="app-main">
           <div className="screen screen-center">
             <div className="done-wrap">
-              <div className="done-icon">✓</div>
-              <h2 className="done-title">お支払い完了</h2>
-              <p className="done-sub">{paymentDone === 'ai' ? 'AI詳細診断のお申し込みを受け付けました。' : 'ご相談を受け付けました。'}</p>
-              <div className="done-card">
-                <p className="done-message">
-                  {paymentDone === 'ai'
-                    ? '診断結果はご登録のメールアドレスへお送りします。'
-                    : '3営業日以内にご登録のメールアドレスへご連絡いたします。'}
-                </p>
-                <p className="done-message" style={{ marginTop: '8px', fontSize: '13px', color: '#787878' }}>
-                  相談後の添削資料はご登録のメールアドレスへお送りします。
-                </p>
-              </div>
-              <div className="done-notice">
-                <p>{paymentDone === 'ai' ? 'AIによる診断のため、必ずしも正確とは限りません。参考情報としてご活用ください' : '設計責任は負いません。参考意見としてご活用ください'}</p>
-              </div>
+              {isCancel ? (
+                <>
+                  <div className="done-icon" style={{ background: '#9CA3AF' }}>×</div>
+                  <h2 className="done-title">お支払いがキャンセルされました</h2>
+                  <p className="done-sub">決済は行われていません。</p>
+                  <div className="done-card">
+                    <p className="done-message">お申し込みを続ける場合は、再度フォームからお手続きください。</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="done-icon">✓</div>
+                  <h2 className="done-title">お支払い完了</h2>
+                  <p className="done-sub">{paymentDone === 'ai' ? 'AI詳細診断のお申し込みを受け付けました。' : 'ご相談を受け付けました。'}</p>
+                  <div className="done-card">
+                    <p className="done-message">
+                      {paymentDone === 'ai'
+                        ? '診断結果はご登録のメールアドレスへお送りします。'
+                        : '3営業日以内にご登録のメールアドレスへご連絡いたします。'}
+                    </p>
+                    <p className="done-message" style={{ marginTop: '8px', fontSize: '13px', color: '#787878' }}>
+                      相談後の添削資料はご登録のメールアドレスへお送りします。
+                    </p>
+                  </div>
+                  <div className="done-notice">
+                    <p>{paymentDone === 'ai' ? 'AIによる診断のため、必ずしも正確とは限りません。参考情報としてご活用ください' : '設計責任は負いません。参考意見としてご活用ください'}</p>
+                  </div>
+                </>
+              )}
               <button className="btn-primary" onClick={() => setPaymentDone(null)}>トップに戻る</button>
             </div>
           </div>
@@ -1553,7 +1570,7 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
 // ─── 建築士相談 フォーム ───────────────────────────────────────────────────────
 
 function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, primaryFile }) {
-  const [form, setForm]         = useState({ name: '', email: '', message: '' })
+  const [form, setForm]         = useState({ name: '', email: '', emailConfirm: '', message: '' })
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState(null)
   const [couponCode, setCouponCode] = useState('')
@@ -1588,6 +1605,8 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.name.trim() || !form.email.trim()) { setError('お名前とメールアドレスを入力してください'); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) { setError('正しいメールアドレスを入力してください'); return }
+    if (form.email.trim() !== form.emailConfirm.trim()) { setError('メールアドレスが一致しません'); return }
     setLoading(true); setError(null)
     try {
       await onSubmit({ ...form, price: finalPrice, couponCode: coupon ? couponCode.trim() : '' })
@@ -1616,7 +1635,7 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
               <span className="price-discount-label">{coupon.label}</span>
             </span>
           ) : (
-            <span className="consult-price">¥3,000（税込）</span>
+            <span className="consult-price">¥3,000</span>
           )}
         </div>
         {basicInfo.structure && (
@@ -1635,6 +1654,15 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
         <div className="form-field">
           <label className="form-label" htmlFor="email">メールアドレス <span className="form-required">必須</span></label>
           <input id="email" name="email" type="email" className="form-input" placeholder="example@email.com" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} />
+        </div>
+        <div className="form-field">
+          <label className="form-label" htmlFor="emailConfirm">メールアドレス（確認） <span className="form-required">必須</span></label>
+          <input id="emailConfirm" name="emailConfirm" type="email" className="form-input" placeholder="もう一度入力してください"
+            value={form.emailConfirm}
+            onChange={e=>setForm({...form,emailConfirm:e.target.value})}
+            onPaste={e=>e.preventDefault()}
+          />
+          <p className="form-char-count" style={{ textAlign: 'left' }}>※ コピー&amp;ペーストは無効です</p>
         </div>
         <div className="form-field">
           <label className="form-label" htmlFor="message">気になる点・ご要望 <span className="slot-optional">任意</span></label>
@@ -1663,6 +1691,8 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
         <button className="btn-primary" type="submit" disabled={loading}>
           {loading ? '決済ページへ移動中...' : `お支払いへ進む（¥${finalPrice.toLocaleString()}）`}
         </button>
+        <p className="form-char-count" style={{ textAlign: 'center', marginTop: 8 }}>Stripeの安全な決済画面に移動します</p>
+        <p className="form-char-count" style={{ textAlign: 'center' }}>※ 決済完了後、Stripeより領収書メールが自動送信されます</p>
       </form>
       <BackButton targetId={onBackId} onClick={onBack} label="戻る" />
     </div>
@@ -1672,13 +1702,15 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
 // ─── AI詳細診断 支払い画面 ────────────────────────────────────────────────────
 
 function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
-  const [form, setForm]       = useState({ name: '', email: '', question: '' })
+  const [form, setForm]       = useState({ name: '', email: '', emailConfirm: '', question: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState(null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.name.trim() || !form.email.trim()) { setError('お名前とメールアドレスを入力してください'); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) { setError('正しいメールアドレスを入力してください'); return }
+    if (form.email.trim() !== form.emailConfirm.trim()) { setError('メールアドレスが一致しません'); return }
     setLoading(true); setError(null)
     try { await onSubmit(form) } catch (err) { setError(err.message); setLoading(false) }
   }
@@ -1696,7 +1728,7 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
         {['無料診断の全項目','優先度付き問題点リスト（最大5件）','「住んでから気づく」生活ストレス予測','コスト感付きの具体的改善策','ピンポイント質疑応答（1問）'].map((t,i)=>(
           <div key={i} className="consult-info-row"><span className="consult-info-icon">✓</span><span>{t}</span></div>
         ))}
-        <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥300（税込）</span></div>
+        <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥300</span></div>
         {basicInfo.structure && (
           <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</span></div>
         )}
@@ -1729,10 +1761,21 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
           <label className="form-label" htmlFor="ai-email">メールアドレス <span className="form-required">必須</span></label>
           <input id="ai-email" name="email" type="email" className="form-input" placeholder="example@email.com" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} />
         </div>
+        <div className="form-field">
+          <label className="form-label" htmlFor="ai-emailConfirm">メールアドレス（確認） <span className="form-required">必須</span></label>
+          <input id="ai-emailConfirm" name="emailConfirm" type="email" className="form-input" placeholder="もう一度入力してください"
+            value={form.emailConfirm}
+            onChange={e=>setForm({...form,emailConfirm:e.target.value})}
+            onPaste={e=>e.preventDefault()}
+          />
+          <p className="form-char-count" style={{ textAlign: 'left' }}>※ コピー&amp;ペーストは無効です</p>
+        </div>
         {error && <div className="error-box">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading}>
           {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥300）'}
         </button>
+        <p className="form-char-count" style={{ textAlign: 'center', marginTop: 8 }}>Stripeの安全な決済画面に移動します</p>
+        <p className="form-char-count" style={{ textAlign: 'center' }}>※ 決済完了後、Stripeより領収書メールが自動送信されます</p>
       </form>
       <BackButton targetId={onBackId} onClick={onBack} label="戻る" />
     </div>
@@ -1751,12 +1794,11 @@ function TokushoModal({ onClose }) {
           <table className="legal-table">
             <tbody>
               <tr><th>販売業者</th><td>齋藤泰地</td></tr>
-              <tr><th>代表者</th><td>齋藤泰地</td></tr>
               <tr><th>所在地</th><td>お問い合わせいただいた場合に遅滞なく開示いたします</td></tr>
               <tr><th>電話番号</th><td>お問い合わせいただいた場合は遅滞なく開示いたします</td></tr>
               <tr><th>メールアドレス</th><td>ArchiAI@outlook.jp</td></tr>
               <tr><th>サービス名</th><td>ArchiAI 間取り診断</td></tr>
-              <tr><th>販売価格</th><td>AI詳細診断 ¥300（税込）／ 一級建築士相談 ¥3,000（税込）</td></tr>
+              <tr><th>販売価格</th><td>AI詳細診断 ¥300／ 一級建築士相談 ¥3,000</td></tr>
               <tr><th>支払方法</th><td>クレジットカード（Stripe決済）</td></tr>
               <tr><th>支払時期</th><td>お申し込み時にご精算いただきます</td></tr>
               <tr><th>サービス提供時期</th><td>AI診断：決済完了後、即時提供。建築士相談：3営業日以内にメールにてご連絡</td></tr>
@@ -1865,7 +1907,7 @@ function SupervisorModal({ onClose }) {
             </tbody>
           </table>
           <p className="legal-text" style={{ marginTop: 12 }}>
-            本サービスの診断基準は、一級建築士である齋藤泰地が住宅設計の専門的知見に基づき設計・監修しています。ただし、AI診断は参考情報であり、設計上の責任を負うものではありません。
+            本サービスの診断基準は、一級建築士である齋藤泰地が住宅設計の専門的知見に基づき監修しています。ただし、AI診断および建築士診断は参考情報であり、設計上の責任を負うものではありません。
           </p>
         </div>
       </div>

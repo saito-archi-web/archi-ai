@@ -2201,7 +2201,7 @@ body {
 .app-footer {
   padding: 24px 20px 32px;
   border-top: 1px solid var(--border);
-  background: var(--white);
+  background: var(--bg);
   text-align: center;
 }
 

@@ -96,10 +96,10 @@ const mailer = nodemailer.createTransport({
   tls: { ciphers: 'SSLv3' },
 });
 
-async function sendNotification({ subject, text }) {
-  if (MOCK_EMAIL) { console.log(`[Email mock] subject="${subject}"`); return; }
+async function sendNotification({ subject, text, attachments = [] }) {
+  if (MOCK_EMAIL) { console.log(`[Email mock] subject="${subject}" attachments=${attachments.length}`); return; }
   try {
-    await mailer.sendMail({ from: EMAIL_USER, to: NOTIFY_EMAIL, subject, text });
+    await mailer.sendMail({ from: EMAIL_USER, to: NOTIFY_EMAIL, subject, text, attachments });
     console.log(`[Email] 送信完了: ${subject}`);
   } catch (e) {
     console.error('[Email] 送信エラー:', e.message);
@@ -474,6 +474,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
       }],
       mode: 'payment',
       customer_email: email,
+      payment_intent_data: { receipt_email: email },
       metadata: {
         name,
         email,
@@ -545,6 +546,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
       }],
       mode: 'payment',
       customer_email: email,
+      payment_intent_data: { receipt_email: email },
       metadata: { name, email, structure: structure || '', floors: floors || '', diagnosisId },
       success_url: `${origin}/?payment=ai-success${didParam}`,
       cancel_url:  `${origin}/?payment=cancel`,
@@ -612,10 +614,15 @@ app.post('/api/consult', upload.array('files', 10), async (req, res) => {
 
     console.log('【建築士相談受付】', { refNo, name, email, message: message || '（なし）', fileCount: files.length, received });
 
-    // 管理者通知メール
+    // 管理者通知メール（ファイル添付）
+    const attachments = files.map(f => ({
+      filename: f.originalname || `file_${Date.now()}`,
+      content:  f.buffer,
+    }));
     await sendNotification({
       subject: `【ArchiAI】新規建築士相談 ${refNo}`,
       text: `建築士相談が届きました。\n\n受付番号: ${refNo}\nお名前: ${name}\nメール: ${email}\n受付日時: ${received}\nファイル数: ${files.length}\n\n---\nご要望:\n${message || '（なし）'}`,
+      attachments,
     });
 
     res.json({
