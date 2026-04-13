@@ -447,6 +447,9 @@ export default function App() {
   const testMode = authenticated
   // 診断結果別画面
   const [resultsView, setResultsView]         = useState(null) // null | 'free' | 'detail' | 'ai-loading'
+  // 法的ページモーダル
+  const [showTokusho, setShowTokusho]         = useState(false)
+  const [showPrivacy, setShowPrivacy]         = useState(false)
 
   // スプラッシュ＋スクロール復元防止
   useEffect(() => {
@@ -726,10 +729,13 @@ export default function App() {
   if (resultsView === 'ai-loading') {
     return (
       <div className="app"><div className="app-content app-content--visible">
+        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
+        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
         <AppHeader />
         <main className="app-main">
           <LoadingScreen message={loadingMsg} pct={loadingPct} title="AI詳細診断中..." />
         </main>
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
       </div></div>
     )
   }
@@ -738,6 +744,8 @@ export default function App() {
   if (resultsView === 'free' && diagnosis) {
     return (
       <div className="app"><div className="app-content app-content--visible">
+        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
+        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
         <AppHeader />
         <main className="app-main">
           <ResultsScreen
@@ -749,6 +757,7 @@ export default function App() {
             error={error}
           />
         </main>
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
       </div></div>
     )
   }
@@ -757,6 +766,8 @@ export default function App() {
   if (resultsView === 'consult-from-detail') {
     return (
       <div className="app"><div className="app-content app-content--visible">
+        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
+        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
         <AppHeader />
         <main className="app-main">
           <ConsultScreen
@@ -767,6 +778,7 @@ export default function App() {
             fromAiDiagnosis={true}
           />
         </main>
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
       </div></div>
     )
   }
@@ -774,6 +786,8 @@ export default function App() {
   if (resultsView === 'detail' && detailDiagnosis) {
     return (
       <div className="app"><div className="app-content app-content--visible">
+        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
+        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
         <AppHeader />
         <main className="app-main">
           <DetailScreen
@@ -785,6 +799,7 @@ export default function App() {
             onBack={() => setResultsView('free')}
           />
         </main>
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
       </div></div>
     )
   }
@@ -793,6 +808,8 @@ export default function App() {
   if (paymentDone) {
     return (
       <div className="app">
+        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
+        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -825,6 +842,7 @@ export default function App() {
             </div>
           </div>
         </main>
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
       </div>
     )
   }
@@ -844,6 +862,8 @@ export default function App() {
             onCancel={() => setConsentModal(null)}
           />
         )}
+        {showTokusho && <TokushoModal onClose={() => setShowTokusho(false)} />}
+        {showPrivacy  && <PrivacyModal  onClose={() => setShowPrivacy(false)}  />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -972,6 +992,7 @@ export default function App() {
           )}
 
         </main>
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} />
       </div>
     </div>
   )
@@ -1047,6 +1068,12 @@ function LandingScreen({ onStart, onViewSaved }) {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="supervisor-badge">
+        <span className="supervisor-badge-label">診断基準 監修</span>
+        <span className="supervisor-badge-name">一級建築士　齋藤泰地</span>
+        <span className="supervisor-badge-no">登録番号：○○号</span>
       </div>
 
       <button className="btn-primary btn-start" onClick={onStart}>診断を始める</button>
@@ -1264,7 +1291,7 @@ function LoadingScreen({ message, pct, title }) {
         </div>
         <h2 className="loading-title">{title}</h2>
         <p className="loading-msg">{message}</p>
-        <p className="loading-hint">一級建築士監修の診断基準で分析しています</p>
+        <p className="loading-hint">一級建築士 齋藤泰地 監修の診断基準で分析しています</p>
       </div>
     </div>
   )
@@ -1333,7 +1360,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         <div className="section">
           <h3 className="section-title">AIからの総評</h3>
           <div className="comment-card"><p className="comment-text">「{overall_comment}」</p></div>
-          <p className="supervisor-caption">※ 診断基準は一級建築士が監修しています</p>
+          <p className="supervisor-caption">※ 診断基準は一級建築士 齋藤泰地（登録番号：○○号）が監修しています</p>
         </div>
       )}
 
@@ -1458,7 +1485,7 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
         <div className="section">
           <h3 className="section-title">AIからの verdict</h3>
           <div className="verdict-card"><p className="verdict-text">{verdict}</p></div>
-          <p className="supervisor-caption">※ 診断基準は一級建築士が監修しています</p>
+          <p className="supervisor-caption">※ 診断基準は一級建築士 齋藤泰地（登録番号：○○号）が監修しています</p>
         </div>
       )}
 
@@ -1707,5 +1734,111 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
       </form>
       <BackButton targetId={onBackId} onClick={onBack} label="戻る" />
     </div>
+  )
+}
+
+// ─── 特定商取引法モーダル ──────────────────────────────────────────────────────
+
+function TokushoModal({ onClose }) {
+  return (
+    <div className="legal-modal-overlay" onClick={onClose}>
+      <div className="legal-modal" onClick={e => e.stopPropagation()}>
+        <button className="legal-modal-close" onClick={onClose}>×</button>
+        <h2 className="legal-modal-title">特定商取引法に基づく表記</h2>
+        <div className="legal-modal-body">
+          <table className="legal-table">
+            <tbody>
+              <tr><th>販売業者</th><td>齋藤泰地</td></tr>
+              <tr><th>代表者</th><td>齋藤泰地</td></tr>
+              <tr><th>所在地</th><td>○○（お問い合わせいただいた場合は遅滞なく開示いたします）</td></tr>
+              <tr><th>電話番号</th><td>お問い合わせいただいた場合は遅滞なく開示いたします</td></tr>
+              <tr><th>メールアドレス</th><td>ArchiAI@outlook.jp</td></tr>
+              <tr><th>サービス名</th><td>ArchiAI 間取り診断</td></tr>
+              <tr><th>販売価格</th><td>AI詳細診断 ¥300（税込）／ 一級建築士相談 ¥3,000（税込）</td></tr>
+              <tr><th>支払方法</th><td>クレジットカード（Stripe決済）</td></tr>
+              <tr><th>支払時期</th><td>お申し込み時にご精算いただきます</td></tr>
+              <tr><th>サービス提供時期</th><td>AI診断：決済完了後、即時提供。建築士相談：3営業日以内にメールにてご連絡</td></tr>
+              <tr><th>返品・キャンセル</th><td>デジタルコンテンツの性質上、決済完了後のキャンセル・返金はお受けできません。サービスに重大な瑕疵があった場合はご相談ください。</td></tr>
+              <tr><th>動作環境</th><td>最新版のChrome / Safari / Firefox 推奨（JavaScript有効）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── プライバシーポリシーモーダル ──────────────────────────────────────────────
+
+function PrivacyModal({ onClose }) {
+  return (
+    <div className="legal-modal-overlay" onClick={onClose}>
+      <div className="legal-modal" onClick={e => e.stopPropagation()}>
+        <button className="legal-modal-close" onClick={onClose}>×</button>
+        <h2 className="legal-modal-title">プライバシーポリシー</h2>
+        <div className="legal-modal-body">
+          <p className="legal-section-title">1. 取得する情報</p>
+          <p className="legal-text">当サービスでは、以下の情報を取得する場合があります。</p>
+          <ul className="legal-list">
+            <li>お名前・メールアドレス（一級建築士相談・AI詳細診断お申し込み時）</li>
+            <li>アップロードされた間取り図・画像ファイル</li>
+            <li>ご入力いただいた建物情報・ご要望</li>
+            <li>アクセスログ・IPアドレス等のサーバーログ</li>
+          </ul>
+
+          <p className="legal-section-title">2. 利用目的</p>
+          <ul className="legal-list">
+            <li>AIによる間取り診断サービスの提供</li>
+            <li>一級建築士相談のご対応・メールでのフィードバック送付</li>
+            <li>サービス改善および不正利用防止</li>
+          </ul>
+
+          <p className="legal-section-title">3. 第三者提供</p>
+          <p className="legal-text">取得した個人情報は、以下の場合を除き第三者に提供しません。</p>
+          <ul className="legal-list">
+            <li>ご本人の同意がある場合</li>
+            <li>法令に基づく場合</li>
+            <li>決済処理のためのStripe（米国）への提供（決済情報のみ）</li>
+          </ul>
+
+          <p className="legal-section-title">4. 外部サービスの利用</p>
+          <ul className="legal-list">
+            <li><strong>Google reCAPTCHA v3</strong>：不正アクセス防止のために使用します。Googleの<a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>および<a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">利用規約</a>が適用されます。</li>
+            <li><strong>Anthropic Claude API</strong>：間取り図の分析に使用します。アップロードされた画像はAnthropicのサーバーで処理されます。</li>
+            <li><strong>Stripe</strong>：決済処理に使用します。カード情報は当サービスには保存されません。</li>
+          </ul>
+
+          <p className="legal-section-title">5. 診断結果の保存</p>
+          <p className="legal-text">AI詳細診断の結果はお客様のブラウザのローカルストレージに最大30日間保存されます。このデータは同一ブラウザ・端末からのみアクセス可能で、当社サーバーには保存されません。</p>
+
+          <p className="legal-section-title">6. お問い合わせ</p>
+          <p className="legal-text">個人情報に関するお問い合わせは <strong>ArchiAI@outlook.jp</strong> までご連絡ください。</p>
+
+          <p className="legal-footer-note">制定日：2025年4月</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── フッター ─────────────────────────────────────────────────────────────────
+
+function AppFooter({ onTokusho, onPrivacy }) {
+  return (
+    <footer className="app-footer">
+      <div className="footer-links">
+        <button className="footer-link" onClick={onTokusho}>特定商取引法に基づく表記</button>
+        <span className="footer-sep">|</span>
+        <button className="footer-link" onClick={onPrivacy}>プライバシーポリシー</button>
+        <span className="footer-sep">|</span>
+        <a className="footer-link" href="mailto:ArchiAI@outlook.jp">お問い合わせ</a>
+      </div>
+      <p className="footer-recaptcha">
+        このサイトはreCAPTCHAによって保護されており、Googleの
+        <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>と
+        <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">利用規約</a>が適用されます。
+      </p>
+      <p className="footer-copy">© 2025 ArchiAI. All rights reserved.</p>
+    </footer>
   )
 }

@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 // ─── レートリミット ────────────────────────────────────────────────────────────
@@ -72,8 +73,38 @@ const upload = multer({
   },
 });
 
-app.use(cors());
+// ─── CORS ────────────────────────────────────────────────────────────────────
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || null; // 例: https://archi-ai.onrender.com
+app.use(cors(ALLOWED_ORIGIN && process.env.NODE_ENV === 'production'
+  ? { origin: ALLOWED_ORIGIN, credentials: true }
+  : {}
+));
 app.use(express.json());
+
+// ─── メール通知 ───────────────────────────────────────────────────────────────
+const NOTIFY_EMAIL = 'ArchiAI@outlook.jp';
+const EMAIL_USER   = process.env.EMAIL_USER || NOTIFY_EMAIL;
+const EMAIL_PASS   = process.env.EMAIL_PASS || '';
+const MOCK_EMAIL   = !EMAIL_PASS;
+if (MOCK_EMAIL) console.log('[Email] パスワード未設定 → メール送信をスキップします');
+
+const mailer = nodemailer.createTransport({
+  host: 'smtp-mail.outlook.com',
+  port: 587,
+  secure: false,
+  auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+  tls: { ciphers: 'SSLv3' },
+});
+
+async function sendNotification({ subject, text }) {
+  if (MOCK_EMAIL) { console.log(`[Email mock] subject="${subject}"`); return; }
+  try {
+    await mailer.sendMail({ from: EMAIL_USER, to: NOTIFY_EMAIL, subject, text });
+    console.log(`[Email] 送信完了: ${subject}`);
+  } catch (e) {
+    console.error('[Email] 送信エラー:', e.message);
+  }
+}
 
 const MOCK_MODE = !process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'your_anthropic_api_key_here';
 const client = MOCK_MODE ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -486,8 +517,19 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
     const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
 
     if (MOCK_STRIPE) {
+      // 管理者通知（モック時）
+      await sendNotification({
+        subject: `【ArchiAI】AI詳細診断 申込（テスト）`,
+        text: `AI詳細診断の申し込みがありました。\n\nお名前: ${name}\nメール: ${email}\n診断ID: ${diagnosisId}\nファイル数: ${files.length}\n質問: ${req.body?.question || '（なし）'}`,
+      });
       return res.json({ url: `${origin}/?payment=ai-success${didParam}` });
     }
+
+    // 管理者通知
+    await sendNotification({
+      subject: `【ArchiAI】AI詳細診断 申込`,
+      text: `AI詳細診断の申し込みがありました。\n\nお名前: ${name}\nメール: ${email}\n診断ID: ${diagnosisId}\nファイル数: ${files.length}\n質問: ${req.body?.question || '（なし）'}`,
+    });
 
     const session = await stripe.checkout.sessions.create({
       line_items: [{
@@ -568,8 +610,13 @@ app.post('/api/consult', upload.array('files', 10), async (req, res) => {
     const received = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
     const files = req.files || [];
 
-    // 本番では外部メール/DB保存に置き換える
     console.log('【建築士相談受付】', { refNo, name, email, message: message || '（なし）', fileCount: files.length, received });
+
+    // 管理者通知メール
+    await sendNotification({
+      subject: `【ArchiAI】新規建築士相談 ${refNo}`,
+      text: `建築士相談が届きました。\n\n受付番号: ${refNo}\nお名前: ${name}\nメール: ${email}\n受付日時: ${received}\nファイル数: ${files.length}\n\n---\nご要望:\n${message || '（なし）'}`,
+    });
 
     res.json({
       ref_no: refNo,
