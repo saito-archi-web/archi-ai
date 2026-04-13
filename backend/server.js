@@ -306,6 +306,10 @@ ${questionSection}
 - 「監視性」という言葉は使用しない。子ども室の見守りに関する指摘は「見守りやすさ」「声が届きやすいか」などの表現を使うこと
 - 書斎・ワークスペースが独立した個室であることは問題点としない（プライバシーや集中環境として適切なため）
 - 間取り図に明確に記載・描画されていない室（サンルーム・ウッドデッキ等）は存在しないものとして扱い、問題点・ストレス・改善提案に含めない
+- 子供室とLDKの生活音干渉については、廊下・収納・ホール等が間に挟まっている場合は影響が軽減されるため問題点としない。直接隣接している場合のみ指摘すること
+- パントリーとWICの動線の分断は問題点としない（両室の間に直接的な機能的関係はないため）
+- ランドリールームから屋外への動線については、間取り図にデッキ・テラス・庭への出入り口が明確に描かれている場合のみ動線の可否を判断して指摘すること。屋外への出入り口が確認できない場合、または乾燥機使用の可能性がある場合は指摘しない
+- 玄関からリビングへのプライバシー不足は、玄関ドアを開けた正面に居室の出入り口が直接見える配置の場合のみ指摘すること。玄関とリビングの間に収納・壁・ホール等の遮蔽物がある場合は問題としない
 
 【出力内容】
 1. priority_issues: 優先度の高い問題点を最大5つ。rank（1が最重要）、title（問題の名前）、detail（詳細な説明）、impact（実生活への具体的影響）を含める
@@ -379,12 +383,38 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
   }
 });
 
+// ─── クーポン定義（環境変数 COUPONS_JSON で上書き可能） ───────────────────────
+// 例: COUPONS_JSON='{"ARCHI500":{"discount":500,"label":"¥500割引"}}'
+const DEFAULT_COUPONS = {
+  // ここにコードを追加: 'コード': { discount: 割引額(円), label: '表示名' }
+};
+let COUPONS = DEFAULT_COUPONS;
+try {
+  if (process.env.COUPONS_JSON) COUPONS = JSON.parse(process.env.COUPONS_JSON);
+} catch { console.warn('COUPONS_JSON parse error'); }
+
+app.post('/api/validate-coupon', express.json(), (req, res) => {
+  const code = (req.body?.code || '').toUpperCase().trim();
+  const coupon = COUPONS[code];
+  if (!coupon) return res.json({ valid: false });
+  res.json({ valid: true, discount: coupon.discount, label: coupon.label });
+});
+
 // ─── Stripe 決済セッション作成 ────────────────────────────────────────────────
 app.post('/api/create-checkout-session', upload.none(), async (req, res) => {
   try {
-    const { name, email, message, structure, floors, familySize, ageGroup } = req.body;
+    const { name, email, message, structure, floors, familySize, ageGroup, price, couponCode } = req.body;
     if (!name || !email) {
       return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
+    }
+
+    // クーポン適用
+    let chargeAmount = 3000;
+    if (couponCode) {
+      const c = COUPONS[(couponCode).toUpperCase().trim()];
+      if (c) chargeAmount = Math.max(3000 - c.discount, 0);
+    } else if (price) {
+      chargeAmount = parseInt(price, 10) || 3000;
     }
 
     const origin = process.env.NODE_ENV === 'production'
@@ -403,9 +433,11 @@ app.post('/api/create-checkout-session', upload.none(), async (req, res) => {
           currency: 'jpy',
           product_data: {
             name: '一級建築士相談',
-            description: '間取りの妥当性チェック・テキストフィードバック（3営業日以内）',
+            description: couponCode
+              ? `間取りの妥当性チェック・テキストフィードバック（3営業日以内）※クーポン適用`
+              : '間取りの妥当性チェック・テキストフィードバック（3営業日以内）',
           },
-          unit_amount: 3000,
+          unit_amount: chargeAmount,
         },
         quantity: 1,
       }],
@@ -431,7 +463,7 @@ app.post('/api/create-checkout-session', upload.none(), async (req, res) => {
   }
 });
 
-// ─── AI詳細診断 決済セッション作成（¥500） ──────────────────────────────────────
+// ─── AI詳細診断 決済セッション作成（¥300） ──────────────────────────────────────
 // ファイルも受け取り、一時保存してIDを発行。決済後に即時診断できるようにする。
 app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
@@ -465,7 +497,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
             name: 'AI詳細診断',
             description: '優先度付き問題点リスト・生活ストレス予測・具体的改善策',
           },
-          unit_amount: 500,
+          unit_amount: 300,
         },
         quantity: 1,
       }],

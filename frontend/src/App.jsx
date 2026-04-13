@@ -138,7 +138,7 @@ const PLANS = [
     features: ['5項目スコアリング（動線・採光・収納など）', '良い点・気になるポイントの指摘', '基本的な改善提案', '診断後にAI詳細診断・建築士相談に進める'],
   },
   {
-    id: 'ai', name: 'AI詳細診断', price: '¥500', tag: '人気', tagBg: '#FF6B35',
+    id: 'ai', name: 'AI詳細診断', price: '¥300', tag: '人気', tagBg: '#FF6B35',
     features: ['無料診断の全項目', '優先度付き問題点リスト（最大5件）', '「住んでから気づく」生活ストレス予測', 'コスト感付きの具体的改善策', 'ピンポイント質疑応答（1問）', '診断後に一級建築士相談に進める'],
   },
   {
@@ -697,6 +697,8 @@ export default function App() {
     fd.append('floors',      basicInfo.floors      || '')
     fd.append('familySize',  basicInfo.familySize  || '')
     fd.append('ageGroup',    basicInfo.ageGroup    || '')
+    if (form.price && form.price !== 3000) fd.append('price', form.price)
+    if (form.couponCode) fd.append('couponCode', form.couponCode)
     const res = await fetch('/api/create-checkout-session', { method: 'POST', body: fd })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error)
@@ -752,6 +754,23 @@ export default function App() {
   }
 
   // 診断結果 別画面（AI詳細）
+  if (resultsView === 'consult-from-detail') {
+    return (
+      <div className="app"><div className="app-content app-content--visible">
+        <AppHeader />
+        <main className="app-main">
+          <ConsultScreen
+            onSubmit={handleConsultSubmit}
+            onBack={() => { window.scrollTo(0, 0); setResultsView('detail') }}
+            basicInfo={basicInfo}
+            primaryFile={primaryFile}
+            fromAiDiagnosis={true}
+          />
+        </main>
+      </div></div>
+    )
+  }
+
   if (resultsView === 'detail' && detailDiagnosis) {
     return (
       <div className="app"><div className="app-content app-content--visible">
@@ -762,7 +781,7 @@ export default function App() {
             freeDiagnosis={diagnosis}
             onScreenRef={null}
             onReset={handleReset}
-            onConsult={() => { window.scrollTo(0, 0); setResultsView(null); withConsent('architect', () => goTo('results', 'consult')) }}
+            onConsult={() => { window.scrollTo(0, 0); withConsent('architect', () => setResultsView('consult-from-detail')) }}
             onBack={() => setResultsView('free')}
           />
         </main>
@@ -1325,7 +1344,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         <div className="premium-card">
           <div className="premium-card-top">
             <div><span className="premium-card-name">② AI詳細診断</span><p className="premium-card-sub">問題点の深掘り＋生活ストレス予測</p></div>
-            <span className="premium-card-price">¥500</span>
+            <span className="premium-card-price">¥300</span>
           </div>
           <ul className="premium-list">
             <li>優先順位付きの問題点リスト（最大5件）</li>
@@ -1333,7 +1352,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
             <li>コスト感付きの具体的改善提案</li>
             <li>ピンポイント質疑応答（1問）</li>
           </ul>
-          <button className="btn-premium-orange" onClick={onDetailDiagnose}>AI詳細診断を見る（¥500）</button>
+          <button className="btn-premium-orange" onClick={onDetailDiagnose}>AI詳細診断を見る（¥300）</button>
         </div>
         <div className="premium-card" style={{ marginTop: 11 }}>
           <div className="premium-card-top">
@@ -1505,15 +1524,45 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
 // ─── 建築士相談 フォーム ───────────────────────────────────────────────────────
 
 function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, primaryFile }) {
-  const [form, setForm]       = useState({ name: '', email: '', message: '' })
-  const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState(null)
+  const [form, setForm]         = useState({ name: '', email: '', message: '' })
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState(null)
+  const [couponCode, setCouponCode] = useState('')
+  const [coupon, setCoupon]     = useState(null)   // { discount, label } or null
+  const [couponError, setCouponError] = useState(null)
+  const [couponLoading, setCouponLoading] = useState(false)
+
+  const finalPrice = coupon ? 3000 - coupon.discount : 3000
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return
+    setCouponLoading(true); setCouponError(null); setCoupon(null)
+    try {
+      const res = await fetch('/api/validate-coupon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: couponCode.trim() })
+      })
+      const data = await res.json()
+      if (data.valid) {
+        setCoupon({ discount: data.discount, label: data.label })
+      } else {
+        setCouponError('無効なクーポンコードです')
+      }
+    } catch {
+      setCouponError('確認中にエラーが発生しました')
+    } finally {
+      setCouponLoading(false)
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.name.trim() || !form.email.trim()) { setError('お名前とメールアドレスを入力してください'); return }
     setLoading(true); setError(null)
-    try { await onSubmit(form) } catch (err) { setError(err.message); setLoading(false) }
+    try {
+      await onSubmit({ ...form, price: finalPrice, couponCode: coupon ? couponCode.trim() : '' })
+    } catch (err) { setError(err.message); setLoading(false) }
   }
 
   return (
@@ -1529,7 +1578,18 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
         {['間取りの妥当性チェック（法規確認は除く）','動線・方位・収納・圧迫感の指摘','テキストコメントでのフィードバック','3営業日以内にメールでご連絡'].map((t,i)=>(
           <div key={i} className="consult-info-row"><span className="consult-info-icon">✓</span><span>{t}</span></div>
         ))}
-        <div className="consult-price-row"><span>相談料</span><span className="consult-price">¥3,000（税込）</span></div>
+        <div className="consult-price-row">
+          <span>相談料</span>
+          {coupon ? (
+            <span className="consult-price">
+              <span className="price-original">¥3,000</span>
+              <span className="price-discounted">¥{finalPrice.toLocaleString()}（税込）</span>
+              <span className="price-discount-label">{coupon.label}</span>
+            </span>
+          ) : (
+            <span className="consult-price">¥3,000（税込）</span>
+          )}
+        </div>
         {basicInfo.structure && (
           <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</span></div>
         )}
@@ -1553,10 +1613,26 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
             placeholder="例：キッチンから洗面所への動線が気になります..."
             value={form.message} onChange={e=>setForm({...form,message:e.target.value})} />
         </div>
+        <div className="form-field">
+          <label className="form-label" htmlFor="coupon">クーポンコード <span className="slot-optional">任意</span></label>
+          <div className="coupon-row">
+            <input
+              id="coupon" type="text" className="form-input coupon-input"
+              placeholder="コードを入力"
+              value={couponCode}
+              onChange={e => { setCouponCode(e.target.value); setCoupon(null); setCouponError(null) }}
+            />
+            <button type="button" className="btn-coupon" onClick={handleApplyCoupon} disabled={couponLoading || !couponCode.trim()}>
+              {couponLoading ? '確認中' : '適用'}
+            </button>
+          </div>
+          {coupon && <p className="coupon-success">✓ {coupon.label}が適用されました</p>}
+          {couponError && <p className="coupon-error">{couponError}</p>}
+        </div>
         <div className="form-note-box"><p>アップロード済みのファイルが自動的に添付されます。</p></div>
         {error && <div className="error-box">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading}>
-          {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥3,000）'}
+          {loading ? '決済ページへ移動中...' : `お支払いへ進む（¥${finalPrice.toLocaleString()}）`}
         </button>
       </form>
       <BackButton targetId={onBackId} onClick={onBack} label="戻る" />
@@ -1591,7 +1667,7 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
         {['無料診断の全項目','優先度付き問題点リスト（最大5件）','「住んでから気づく」生活ストレス予測','コスト感付きの具体的改善策','ピンポイント質疑応答（1問）'].map((t,i)=>(
           <div key={i} className="consult-info-row"><span className="consult-info-icon">✓</span><span>{t}</span></div>
         ))}
-        <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥500（税込）</span></div>
+        <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥300（税込）</span></div>
         {basicInfo.structure && (
           <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</span></div>
         )}
@@ -1626,7 +1702,7 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
         </div>
         {error && <div className="error-box">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading}>
-          {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥500）'}
+          {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥300）'}
         </button>
       </form>
       <BackButton targetId={onBackId} onClick={onBack} label="戻る" />
