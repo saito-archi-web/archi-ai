@@ -451,6 +451,7 @@ export default function App() {
   const [showTokusho, setShowTokusho]         = useState(false)
   const [showPrivacy, setShowPrivacy]         = useState(false)
   const [showSupervisor, setShowSupervisor]   = useState(false)
+  const [showTerms, setShowTerms]             = useState(false)
 
   // スプラッシュ＋スクロール復元防止
   useEffect(() => {
@@ -736,11 +737,12 @@ export default function App() {
         {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
+        {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
         <AppHeader />
         <main className="app-main">
           <LoadingScreen message={loadingMsg} pct={loadingPct} title="AI詳細診断中..." />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
       </div></div>
     )
   }
@@ -752,6 +754,7 @@ export default function App() {
         {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
+        {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
         <AppHeader />
         <main className="app-main">
           <ResultsScreen
@@ -763,7 +766,7 @@ export default function App() {
             error={error}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
       </div></div>
     )
   }
@@ -775,6 +778,7 @@ export default function App() {
         {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
+        {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
         <AppHeader />
         <main className="app-main">
           <ConsultScreen
@@ -785,7 +789,7 @@ export default function App() {
             fromAiDiagnosis={true}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
       </div></div>
     )
   }
@@ -796,6 +800,7 @@ export default function App() {
         {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
+        {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
         <AppHeader />
         <main className="app-main">
           <DetailScreen
@@ -807,7 +812,7 @@ export default function App() {
             onBack={() => setResultsView('free')}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
       </div></div>
     )
   }
@@ -820,6 +825,7 @@ export default function App() {
         {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
+        {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -865,7 +871,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
       </div>
     )
   }
@@ -888,6 +894,7 @@ export default function App() {
         {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
+        {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -1016,7 +1023,7 @@ export default function App() {
           )}
 
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
       </div>
     </div>
   )
@@ -1867,10 +1874,12 @@ function PrivacyModal({ onClose }) {
 
 // ─── フッター ─────────────────────────────────────────────────────────────────
 
-function AppFooter({ onTokusho, onPrivacy, onSupervisor }) {
+function AppFooter({ onTokusho, onPrivacy, onSupervisor, onTerms }) {
   return (
     <footer className="app-footer">
       <div className="footer-links">
+        <button className="footer-link" onClick={onTerms}>利用規約</button>
+        <span className="footer-sep">|</span>
         <button className="footer-link" onClick={onTokusho}>特定商取引法に基づく表記</button>
         <span className="footer-sep">|</span>
         <button className="footer-link" onClick={onPrivacy}>プライバシーポリシー</button>
@@ -1909,6 +1918,78 @@ function SupervisorModal({ onClose }) {
           <p className="legal-text" style={{ marginTop: 12 }}>
             本サービスの診断基準は、一級建築士である齋藤泰地が住宅設計の専門的知見に基づき監修しています。ただし、AI診断および建築士診断は参考情報であり、設計上の責任を負うものではありません。
           </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── 利用規約モーダル ──────────────────────────────────────────────────────────
+
+function TermsModal({ onClose }) {
+  return (
+    <div className="legal-modal-overlay" onClick={onClose}>
+      <div className="legal-modal" onClick={e => e.stopPropagation()}>
+        <button className="legal-modal-close" onClick={onClose}>×</button>
+        <h2 className="legal-modal-title">利用規約</h2>
+        <div className="legal-modal-body">
+
+          <p className="legal-text">本利用規約（以下「本規約」）は、齋藤泰地（以下「当社」）が提供するArchiAI 間取り診断サービス（以下「本サービス」）の利用条件を定めるものです。本サービスをご利用になる方（以下「ユーザー」）は、本規約に同意したものとみなします。</p>
+
+          <p className="legal-section-title">第1条（AIの出力結果の性質および免責）</p>
+          <ol className="legal-list">
+            <li>本サービスが提供するAI診断結果（以下「診断結果」）は、機械学習モデルによる統計的推定に基づく参考情報であり、その正確性・完全性・最新性を保証するものではありません。</li>
+            <li>診断結果は、建築計画・設計・施工の意思決定のための唯一の根拠として使用することはできません。実際の建築計画等においては、必ず一級建築士・二級建築士その他の専門家にご相談ください。</li>
+            <li>当社は、診断結果の誤り・不正確な情報等によって生じた損害について、当社に故意または重大な過失がある場合を除き、一切の責任を負いません。</li>
+            <li>前項の責任限定は、消費者契約法その他の強行法規に反する範囲においては適用されません。</li>
+          </ol>
+
+          <p className="legal-section-title">第2条（建築士法その他法令との関係）</p>
+          <ol className="legal-list">
+            <li>本サービスが提供する診断結果は、建築士法（昭和25年法律第202号）第2条第6項に定める「設計」（設計図書の作成）には該当せず、建築士による業務の代替を目的とするものではありません。</li>
+            <li>本サービスは、建築物の建築工事実施のために必要な図面・仕様書等の作成を行うものではありません。</li>
+          </ol>
+
+          <p className="legal-section-title">第3条（著作権・知的財産権）</p>
+          <ol className="legal-list">
+            <li>本サービスに含まれるコンテンツの著作権その他の知的財産権は、当社または正当な権利者に帰属します。</li>
+            <li>ユーザーが本サービスに入力した間取り図・テキスト等の著作権はユーザーに帰属します。ただし、ユーザーは当社に対し、サービス提供・運営改善の目的に限り、当該コンテンツを無償かつ非独占的に利用する権利を許諾するものとします。</li>
+            <li>当社はユーザーに対し、診断結果を個人的・非商業的目的に使用する権利を許諾します。商業利用については別途当社の許可が必要です。</li>
+          </ol>
+
+          <p className="legal-section-title">第4条（禁止事項）</p>
+          <p className="legal-text">ユーザーは、以下の行為を行ってはなりません。</p>
+          <ol className="legal-list">
+            <li>診断結果・コンテンツを当社の書面による事前承諾なく第三者へ再配布・転載・販売すること</li>
+            <li>本サービスを競合するAI診断サービスの開発・学習データ収集・ベンチマーキングを目的として利用すること</li>
+            <li>本サービスをリバースエンジニアリング・逆コンパイル・逆アセンブルする行為</li>
+            <li>本サービスの運営を妨害するような過度な負荷をかける行為</li>
+            <li>当社または第三者の著作権・商標権・その他知的財産権を侵害する行為</li>
+            <li>当社または第三者の名誉・プライバシーを侵害する行為</li>
+            <li>法令・公序良俗に反するその他の行為</li>
+          </ol>
+
+          <p className="legal-section-title">第5条（サービスの変更・中断・終了）</p>
+          <ol className="legal-list">
+            <li>当社は、事前に通知することにより、本サービスの内容・機能・料金体系を変更することができます。</li>
+            <li>当社は、システム保守・天災・法令上の理由等により、本サービスを一時中断することがあります。</li>
+            <li>当社は、30日以上の予告期間を設けた上で本サービスを終了することができます。</li>
+            <li>前各項に定める変更・中断・終了によってユーザーに生じた損害について、当社に故意または重大な過失がある場合を除き、当社は責任を負いません。</li>
+          </ol>
+
+          <p className="legal-section-title">第6条（未成年者の利用）</p>
+          <ol className="legal-list">
+            <li>有料コンテンツについては、18歳未満の方はご利用いただけません。</li>
+            <li>当社がユーザーを未成年者と認識した場合は、当社の判断により利用を制限または停止することができます。</li>
+          </ol>
+
+          <p className="legal-section-title">第7条（準拠法および管轄裁判所）</p>
+          <ol className="legal-list">
+            <li>本規約は、日本法に準拠し、日本法に従って解釈されます。</li>
+            <li>本サービスに関連して生じた紛争については、訴額に応じ、東京簡易裁判所または東京地方裁判所を第一審の専属的合意管轄裁判所とします。</li>
+          </ol>
+
+          <p className="legal-text" style={{ marginTop: 16 }}>制定日：2026年1月1日</p>
         </div>
       </div>
     </div>
