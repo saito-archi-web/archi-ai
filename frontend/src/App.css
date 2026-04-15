@@ -410,6 +410,49 @@ body {
   transition: background 0.15s;
 }
 .btn-screenshot:active { background: #FEE2E2; }
+
+/* ─── 診断結果メール送信 ─────────────────────────────────────────────────────── */
+.send-result-box {
+  margin-top: 11px;
+  border-top: 1px solid var(--border);
+  padding-top: 11px;
+}
+.send-result-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.send-result-row {
+  display: flex;
+  gap: 8px;
+}
+.send-result-input {
+  flex: 1;
+}
+.btn-send-result {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+.btn-send-result:disabled { opacity: 0.4; cursor: default; }
+.send-result-done {
+  font-size: 13px;
+  color: var(--good);
+  font-weight: 600;
+}
+.send-result-error {
+  font-size: 12px;
+  color: var(--primary);
+  margin-top: 5px;
+}
 .btn-screenshot:disabled { opacity: 0.5; }
 
 /* ─── ローディング画面 ───────────────────────────────────────────────────────── */

@@ -79,6 +79,62 @@ app.use(cors(ALLOWED_ORIGIN && process.env.NODE_ENV === 'production'
   ? { origin: ALLOWED_ORIGIN, credentials: true }
   : {}
 ));
+
+// ─── 支払い済みフラグ永続化 ──────────────────────────────────────────────────
+const PAID_FLAGS_FILE = path.join(__dirname, 'tmp_paid_flags.json');
+let paidFlags = {};
+try {
+  if (fs.existsSync(PAID_FLAGS_FILE)) {
+    paidFlags = JSON.parse(fs.readFileSync(PAID_FLAGS_FILE, 'utf8'));
+    console.log(`[PaidFlags] ${Object.keys(paidFlags).length}件の支払い済みフラグを読み込みました`);
+  }
+} catch (e) { console.error('[PaidFlags] 読み込みエラー:', e.message); }
+
+function savePaidFlags() {
+  try { fs.writeFileSync(PAID_FLAGS_FILE, JSON.stringify(paidFlags, null, 2)); }
+  catch (e) { console.error('[PaidFlags] 保存エラー:', e.message); }
+}
+
+// ─── Stripe Webhook（express.json()より前に登録必須） ─────────────────────────
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || null;
+
+app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  // モック時はそのまま受け取る
+  if (!stripe || !STRIPE_WEBHOOK_SECRET) {
+    console.log('[Webhook] モックモード → スキップ');
+    return res.json({ received: true });
+  }
+
+  const sig = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('[Webhook] 署名検証失敗:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const diagnosisId = session.metadata?.diagnosisId;
+    const email = session.customer_email || session.metadata?.email || '';
+
+    if (diagnosisId) {
+      // メモリ上のエントリに paid フラグを立てる
+      const entry = tempDiagnosisStore.get(diagnosisId);
+      if (entry) {
+        entry.paid = true;
+        console.log(`[Webhook] 決済確認・paid=true diagnosisId=${diagnosisId}`);
+      }
+      // ディスクに永続化（再起動後も参照可能）
+      paidFlags[diagnosisId] = { email, timestamp: Date.now() };
+      savePaidFlags();
+    }
+  }
+
+  res.json({ received: true });
+});
+
 app.use(express.json());
 
 // ─── メール通知 ───────────────────────────────────────────────────────────────
@@ -561,9 +617,23 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
 
 // ─── AI詳細診断 IDから実行（決済後即時結果用） ────────────────────────────────
 app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
-  const entry = tempDiagnosisStore.get(req.params.id);
+  const id = req.params.id;
+  const entry = tempDiagnosisStore.get(id);
+
   if (!entry) {
+    // 支払い済みフラグが存在する場合はサーバー再起動によるデータ消失
+    if (paidFlags[id]) {
+      return res.status(410).json({
+        error: 'paid_data_lost',
+        message: '決済は確認されていますが、サーバーの再起動によりデータが消失しました。大変申し訳ございません。ArchiAI@outlook.jp までご連絡ください（お名前・決済日時をお知らせください）。',
+      });
+    }
     return res.status(404).json({ error: '診断データが見つかりません。お手数ですが最初からやり直してください。' });
+  }
+
+  // 本番環境では支払い確認必須
+  if (!MOCK_MODE && !MOCK_STRIPE && !entry.paid) {
+    return res.status(403).json({ error: '決済が確認できません。Stripeの決済画面からお手続きください。' });
   }
 
   // キャッシュ済みの結果があれば即返す
@@ -633,6 +703,75 @@ app.post('/api/consult', upload.array('files', 10), async (req, res) => {
   } catch (err) {
     console.error('相談受付エラー:', err);
     res.status(500).json({ error: '受付中にエラーが発生しました。再度お試しください。' });
+  }
+});
+
+// ─── 診断結果メール送信 ────────────────────────────────────────────────────────
+app.post('/api/send-result', express.json(), async (req, res) => {
+  try {
+    const { email, type, result } = req.body;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: '正しいメールアドレスを入力してください' });
+    }
+    if (!result) return res.status(400).json({ error: '送信内容がありません' });
+
+    const isDetail = type === 'detail';
+    const subject = isDetail
+      ? '【ArchiAI】AI詳細診断レポート'
+      : '【ArchiAI】間取り無料診断結果';
+
+    // テキスト形式に変換
+    let body = `${subject}\n${'─'.repeat(40)}\n\n`;
+
+    if (isDetail) {
+      const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict, good_points = [], user_question, user_question_answer } = result;
+      if (priority_issues.length) {
+        body += `■ 優先度の高い問題点\n`;
+        priority_issues.forEach((p, i) => { body += `\n[優先度${p.rank}] ${p.title}\n${p.detail}\n→ 生活への影響: ${p.impact}\n`; });
+      }
+      if (life_stress.length) {
+        body += `\n■ 住んでから感じるストレス\n`;
+        life_stress.forEach(s => { body += `・${s}\n`; });
+      }
+      if (detailed_suggestions.length) {
+        body += `\n■ 具体的な改善提案\n`;
+        detailed_suggestions.forEach(s => { body += `\n[${s.area}] ${s.cost_hint}\n${s.action}\n理由: ${s.reason}\n`; });
+      }
+      if (verdict) body += `\n■ AI総評\n${verdict}\n`;
+      if (good_points.length) {
+        body += `\n■ この間取りの良い点\n`;
+        good_points.forEach(p => { body += `✓ ${p}\n`; });
+      }
+      if (user_question && user_question_answer) {
+        body += `\n■ ご質問への回答\nQ: ${user_question}\nA: ${user_question_answer}\n`;
+      }
+    } else {
+      const { total, grade, categories = [], good_points = [], concerns = [], suggestions = [] } = result;
+      body += `総合スコア: ${total}点 (${grade?.rank || ''})\n${grade?.text || ''}\n\n`;
+      if (categories.length) {
+        body += `■ カテゴリ別スコア\n`;
+        categories.forEach(c => { body += `${c.label}: ${c.score}点\n`; });
+      }
+      if (good_points.length) { body += `\n■ 良い点\n`; good_points.forEach(p => { body += `✓ ${p}\n`; }); }
+      if (concerns.length)    { body += `\n■ 気になる点\n`; concerns.forEach(p => { body += `！${p}\n`; }); }
+      if (suggestions.length) { body += `\n■ 改善提案\n`; suggestions.forEach(p => { body += `→ ${p}\n`; }); }
+    }
+
+    body += `\n${'─'.repeat(40)}\n※ 本診断結果は参考情報です。実際の建築計画には専門家にご相談ください。\n※ 診断基準は一級建築士 齋藤泰地が監修しています。\n\nArchiAI 間取り診断\nhttps://archi-ai.onrender.com\n`;
+
+    // ユーザーへ送信
+    if (!MOCK_EMAIL) {
+      try {
+        await mailer.sendMail({ from: EMAIL_USER, to: email, subject, text: body });
+      } catch (e) { console.error('[Email] 結果送信エラー:', e.message); }
+    } else {
+      console.log(`[Email mock] 結果送信 → ${email} subject="${subject}"`);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('結果メール送信エラー:', err);
+    res.status(500).json({ error: '送信中にエラーが発生しました' });
   }
 });
 

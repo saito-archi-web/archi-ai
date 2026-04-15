@@ -501,6 +501,14 @@ export default function App() {
         fetch(`/api/diagnose/detail-by-id/${did}`)
           .then(r => r.json())
           .then(data => {
+            // サーバー再起動によるデータ消失（決済済みだがファイルが消えた）
+            if (data.error === 'paid_data_lost') {
+              setError(data.message)
+              setResultsView(null)
+              setIsDetailLoading(false)
+              setPaymentDone('ai')
+              return
+            }
             if (data.error) throw new Error(data.error)
             setLoadingPct(100)
             setTimeout(() => {
@@ -847,6 +855,24 @@ export default function App() {
                     <p className="done-message">お申し込みを続ける場合は、再度フォームからお手続きください。</p>
                   </div>
                 </>
+              ) : error ? (
+                <>
+                  <div className="done-icon" style={{ background: '#C42230' }}>!</div>
+                  <h2 className="done-title">データを取得できませんでした</h2>
+                  <p className="done-sub">決済は確認されています。</p>
+                  <div className="done-card">
+                    <p className="done-message" style={{ color: '#C42230', fontWeight: 600, marginBottom: 8 }}>
+                      サーバーの再起動により診断データが消失しました。
+                    </p>
+                    <p className="done-message">
+                      大変お手数ですが、下記までご連絡ください。<br />
+                      お名前・決済日時をお知らせいただければ、対応いたします。
+                    </p>
+                    <p className="done-message" style={{ marginTop: 12, fontWeight: 600 }}>
+                      📧 ArchiAI@outlook.jp
+                    </p>
+                  </div>
+                </>
               ) : (
                 <>
                   <div className="done-icon">✓</div>
@@ -867,7 +893,7 @@ export default function App() {
                   </div>
                 </>
               )}
-              <button className="btn-primary" onClick={() => setPaymentDone(null)}>トップに戻る</button>
+              <button className="btn-primary" onClick={() => { setPaymentDone(null); setError(null) }}>トップに戻る</button>
             </div>
           </div>
         </main>
@@ -1043,7 +1069,8 @@ const CONSENT_NOTICES = {
 }
 
 function ConsentModal({ plan, onAgree, onCancel }) {
-  const [agreed, setAgreed] = useState(false)
+  const [agreed, setAgreed]     = useState(false)
+  const [ageAgreed, setAgeAgreed] = useState(false)
   return (
     <div className="consent-modal-overlay">
       <div className="consent-modal">
@@ -1052,10 +1079,14 @@ function ConsentModal({ plan, onAgree, onCancel }) {
           {CONSENT_NOTICES[plan].map((n, i) => <li key={i}>{n}</li>)}
         </ul>
         <label className="consent-check">
+          <input type="checkbox" checked={ageAgreed} onChange={e => setAgeAgreed(e.target.checked)} />
+          <span>私は18歳以上であることを確認します</span>
+        </label>
+        <label className="consent-check">
           <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} />
           <span>上記の内容を確認し、同意します</span>
         </label>
-        <button className="btn-primary" style={{ marginTop: 16 }} onClick={onAgree} disabled={!agreed}>同意して進む</button>
+        <button className="btn-primary" style={{ marginTop: 16 }} onClick={onAgree} disabled={!agreed || !ageAgreed}>同意して進む</button>
         <button className="btn-ghost" onClick={onCancel}>キャンセル</button>
       </div>
     </div>
@@ -1330,6 +1361,10 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
   const grade = getGrade(total)
   const screenRef = useRef(null)
   const [saving, setSaving] = useState(false)
+  const [sendEmail, setSendEmail] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendDone, setSendDone] = useState(false)
+  const [sendError, setSendError] = useState(null)
 
   const handleSave = async () => {
     if (!screenRef.current) return
@@ -1337,6 +1372,21 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
     try { await saveScreenshot(screenRef.current, 'archi-ai-診断結果.png') }
     catch (e) { if (e?.name !== 'AbortError') alert('保存に失敗しました。再度お試しください。') }
     finally { setSaving(false) }
+  }
+
+  const handleSendEmail = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sendEmail.trim())) { setSendError('正しいメールアドレスを入力してください'); return }
+    setSending(true); setSendError(null)
+    try {
+      const res = await fetch('/api/send-result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: sendEmail.trim(), type: 'free', result: diagnosis }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error || '送信に失敗しました') }
+      setSendDone(true)
+    } catch (e) { setSendError(e.message) }
+    finally { setSending(false) }
   }
 
   return (
@@ -1428,6 +1478,30 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
       <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
         {saving ? '保存中...' : '診断結果を画像で保存'}
       </button>
+
+      <div className="send-result-box screenshot-hide">
+        <p className="send-result-label">診断結果をメールで受け取る</p>
+        {sendDone ? (
+          <p className="send-result-done">✓ 送信しました</p>
+        ) : (
+          <>
+            <div className="send-result-row">
+              <input
+                type="email"
+                className="form-input send-result-input"
+                placeholder="メールアドレスを入力"
+                value={sendEmail}
+                onChange={e => { setSendEmail(e.target.value); setSendError(null) }}
+              />
+              <button className="btn-send-result" onClick={handleSendEmail} disabled={sending || !sendEmail.trim()}>
+                {sending ? '送信中' : '送信'}
+              </button>
+            </div>
+            {sendError && <p className="send-result-error">{sendError}</p>}
+          </>
+        )}
+      </div>
+
       <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
   )
@@ -1439,6 +1513,10 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
   const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict, good_points = [], user_question, user_question_answer } = detail
   const screenRef = useRef(null)
   const [saving, setSaving] = useState(false)
+  const [sendEmail, setSendEmail] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendDone, setSendDone] = useState(false)
+  const [sendError, setSendError] = useState(null)
 
   const handleSave = async () => {
     if (!screenRef.current) return
@@ -1446,6 +1524,21 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
     try { await saveScreenshot(screenRef.current, 'archi-ai-詳細診断.png') }
     catch (e) { if (e?.name !== 'AbortError') alert('保存に失敗しました。再度お試しください。') }
     finally { setSaving(false) }
+  }
+
+  const handleSendEmail = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sendEmail.trim())) { setSendError('正しいメールアドレスを入力してください'); return }
+    setSending(true); setSendError(null)
+    try {
+      const res = await fetch('/api/send-result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: sendEmail.trim(), type: 'detail', result: detail }),
+      })
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error || '送信に失敗しました') }
+      setSendDone(true)
+    } catch (e) { setSendError(e.message) }
+    finally { setSending(false) }
   }
 
   return (
@@ -1568,6 +1661,30 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
       <button className="btn-screenshot screenshot-hide" onClick={handleSave} disabled={saving}>
         {saving ? '保存中...' : '診断結果を画像で保存'}
       </button>
+
+      <div className="send-result-box screenshot-hide">
+        <p className="send-result-label">診断結果をメールで受け取る</p>
+        {sendDone ? (
+          <p className="send-result-done">✓ 送信しました</p>
+        ) : (
+          <>
+            <div className="send-result-row">
+              <input
+                type="email"
+                className="form-input send-result-input"
+                placeholder="メールアドレスを入力"
+                value={sendEmail}
+                onChange={e => { setSendEmail(e.target.value); setSendError(null) }}
+              />
+              <button className="btn-send-result" onClick={handleSendEmail} disabled={sending || !sendEmail.trim()}>
+                {sending ? '送信中' : '送信'}
+              </button>
+            </div>
+            {sendError && <p className="send-result-error">{sendError}</p>}
+          </>
+        )}
+      </div>
+
       {(onBackId || onBack) && <BackButton targetId={onBackId} onClick={onBack} label="無料診断結果に戻る" />}
       <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
@@ -1584,11 +1701,13 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
   const [coupon, setCoupon]     = useState(null)   // { discount, label } or null
   const [couponError, setCouponError] = useState(null)
   const [couponLoading, setCouponLoading] = useState(false)
+  const couponPending = useRef(false)
 
   const finalPrice = coupon ? 3000 - coupon.discount : 3000
 
   const handleApplyCoupon = async () => {
-    if (!couponCode.trim()) return
+    if (!couponCode.trim() || couponPending.current) return
+    couponPending.current = true
     setCouponLoading(true); setCouponError(null); setCoupon(null)
     try {
       const res = await fetch('/api/validate-coupon', {
@@ -1606,6 +1725,7 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
       setCouponError('確認中にエラーが発生しました')
     } finally {
       setCouponLoading(false)
+      couponPending.current = false
     }
   }
 
@@ -1855,7 +1975,7 @@ function PrivacyModal({ onClose }) {
           <p className="legal-section-title">4. 外部サービスの利用</p>
           <ul className="legal-list">
             <li><strong>Google reCAPTCHA v3</strong>：不正アクセス防止のために使用します。Googleの<a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>および<a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">利用規約</a>が適用されます。</li>
-            <li><strong>Anthropic Claude API</strong>：間取り図の分析に使用します。アップロードされた画像はAnthropicのサーバーで処理されます。</li>
+            <li><strong>Anthropic Claude API</strong>：間取り図の分析に使用します。アップロードされた画像・テキストはAnthropicのサーバー（米国）で処理されます。Anthropic社の定めるポリシーに基づき、入力データは原則としてモデルの学習には使用されません（APIご利用規約に準拠）。処理後の画像データはAnthropicのシステム上に一時的に保持されますが、当社サーバーには診断完了後も画像は保存されません。詳細はAnthropicの<a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>をご参照ください。</li>
             <li><strong>Stripe</strong>：決済処理に使用します。カード情報は当サービスには保存されません。</li>
           </ul>
 
