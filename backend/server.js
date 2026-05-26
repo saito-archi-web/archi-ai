@@ -42,7 +42,7 @@ async function verifyRecaptcha(token) {
       { method: 'POST' }
     );
     const data = await resp.json();
-    const ok = data.success && (data.score ?? 1) >= 0.5;
+    const ok = data.success && (data.score ?? 1) >= 0.6;
     console.log(`[reCAPTCHA] success=${data.success} score=${data.score ?? 'n/a'} → ${ok ? '✅通過' : '❌ブロック'}`);
     return ok;
   } catch (e) {
@@ -90,9 +90,32 @@ try {
   }
 } catch (e) { console.error('[PaidFlags] 読み込みエラー:', e.message); }
 
-function savePaidFlags() {
-  try { fs.writeFileSync(PAID_FLAGS_FILE, JSON.stringify(paidFlags, null, 2)); }
-  catch (e) { console.error('[PaidFlags] 保存エラー:', e.message); }
+// 書き込み中フラグ（同時実行時の競合を防ぐ簡易ミューテックス）
+let paidFlagsWriting = false;
+let paidFlagsPending = false;
+async function savePaidFlags() {
+  // 既に書き込み中の場合は、完了後にもう一度実行するようフラグを立てて戻る
+  if (paidFlagsWriting) {
+    paidFlagsPending = true;
+    return;
+  }
+  paidFlagsWriting = true;
+  try {
+    const snapshot = JSON.stringify(paidFlags, null, 2);
+    // 同一ディレクトリの一時ファイルに書き込んでから rename → 原子的更新
+    const tmpPath = `${PAID_FLAGS_FILE}.tmp`;
+    await fs.promises.writeFile(tmpPath, snapshot);
+    await fs.promises.rename(tmpPath, PAID_FLAGS_FILE);
+  } catch (e) {
+    console.error('[PaidFlags] 保存エラー:', e.message);
+  } finally {
+    paidFlagsWriting = false;
+    // 書き込み中に追加の保存要求があった場合は再実行
+    if (paidFlagsPending) {
+      paidFlagsPending = false;
+      savePaidFlags();
+    }
+  }
 }
 
 // ─── Stripe Webhook（express.json()より前に登録必須） ─────────────────────────
@@ -118,6 +141,7 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
     const session = event.data.object;
     const diagnosisId = session.metadata?.diagnosisId;
     const email = session.customer_email || session.metadata?.email || '';
+    const planKind = session.metadata?.plan || 'ai'; // 'ai' | 'architect'
 
     if (diagnosisId) {
       // メモリ上のエントリに paid フラグを立てる
@@ -129,6 +153,35 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
       // ディスクに永続化（再起動後も参照可能）
       paidFlags[diagnosisId] = { email, timestamp: Date.now() };
       savePaidFlags();
+
+      // AI診断プランの場合、サーバー側でバックグラウンド診断を即時開始
+      // → ブラウザの接続状態に関係なく診断を実行し、完了したらメールで結果を送信
+      if (planKind === 'ai' && entry && !MOCK_MODE) {
+        runDiagnosisAndEmail(diagnosisId, email).catch(e =>
+          console.error('[Webhook] バックグラウンド診断の起動エラー:', e.message)
+        );
+      }
+    }
+
+    // ユーザー向け決済確認メール送信
+    if (email) {
+      const isArchitect = planKind === 'architect';
+      await sendUserConfirmation({
+        to: email,
+        subject: isArchitect ? '【ArchiAI】一級建築士相談のお申し込みを受け付けました' : '【ArchiAI】AI詳細診断のお申し込みを受け付けました',
+        text: isArchitect
+          ? `この度は ArchiAI 一級建築士相談プランをお申し込みいただきありがとうございます。\n\n3営業日以内に一級建築士よりメールにてご連絡いたします。\n\n※本メールは自動送信です。ご不明点は ArchiAI@outlook.jp までお問い合わせください。\n\n-- ArchiAI 間取り診断`
+          : `この度は ArchiAI AI詳細診断をお申し込みいただきありがとうございます。\n\n診断結果はご購入完了後、画面上でご確認いただけます。ご登録のメールアドレスにも送信可能です（診断結果画面からお手続きください）。\n\n※本メールは自動送信です。ご不明点は ArchiAI@outlook.jp までお問い合わせください。\n\n-- ArchiAI 間取り診断`,
+      });
+    }
+  } else if (event.type === 'checkout.session.expired') {
+    // Stripeセッション期限切れ時の処理
+    const session = event.data.object;
+    const diagnosisId = session.metadata?.diagnosisId;
+    if (diagnosisId) {
+      console.log(`[Webhook] セッション期限切れ diagnosisId=${diagnosisId}`);
+      // 支払い未完了なのでメモリから削除（paidFlagsは作らない）
+      tempDiagnosisStore.delete(diagnosisId);
     }
   }
 
@@ -159,6 +212,85 @@ async function sendNotification({ subject, text, attachments = [] }) {
     console.log(`[Email] 送信完了: ${subject}`);
   } catch (e) {
     console.error('[Email] 送信エラー:', e.message);
+  }
+}
+
+// ─── AI詳細診断結果をメールで送信 ────────────────────────────────────────────
+async function sendDetailResultEmail(email, result) {
+  const { priority_issues = [], life_stress = [], detailed_suggestions = [], verdict, good_points = [], user_question, user_question_answer } = result;
+  let body = `【ArchiAI】AI詳細診断レポート\n${'─'.repeat(40)}\n\n`;
+  if (priority_issues.length) {
+    body += `■ 優先度の高い問題点\n`;
+    priority_issues.forEach(p => { body += `\n[優先度${p.rank}] ${p.title}\n${p.detail}\n→ 生活への影響: ${p.impact}\n`; });
+  }
+  if (life_stress.length) {
+    body += `\n■ 住んでから感じるストレス\n`;
+    life_stress.forEach(s => { body += `・${s}\n`; });
+  }
+  if (detailed_suggestions.length) {
+    body += `\n■ 具体的な改善提案\n`;
+    detailed_suggestions.forEach(s => { body += `\n[${s.area}] ${s.cost_hint}\n${s.action}\n理由: ${s.reason}\n`; });
+  }
+  if (verdict) body += `\n■ AI総評\n${verdict}\n`;
+  if (good_points.length) {
+    body += `\n■ この間取りの良い点\n`;
+    good_points.forEach(p => { body += `✓ ${p}\n`; });
+  }
+  if (user_question && user_question_answer) {
+    body += `\n■ ご質問への回答\nQ: ${user_question}\nA: ${user_question_answer}\n`;
+  }
+  body += `\n${'─'.repeat(40)}\n※ 本診断結果は参考情報です。実際の建築計画には専門家にご相談ください。\n※ 診断基準は一級建築士が監修しています。\n\nArchiAI 間取り診断\nhttps://archi-ai.onrender.com\n`;
+  await sendUserConfirmation({ to: email, subject: '【ArchiAI】AI詳細診断レポートをお届けします', text: body });
+  console.log(`[BG] 結果メール送信完了 → ${email}`);
+}
+
+// ─── AI詳細診断バックグラウンド実行（支払い確認後にサーバー側で自動実行） ──────
+async function runDiagnosisAndEmail(diagnosisId, email) {
+  const entry = tempDiagnosisStore.get(diagnosisId);
+  if (!entry) { console.log(`[BG] エントリなし diagnosisId=${diagnosisId}`); return; }
+  if (entry.result) { console.log(`[BG] 既にキャッシュ済み`); return; }
+  if (entry.running) { console.log(`[BG] 既に実行中`); return; }
+
+  entry.running = true;
+  console.log(`[BG] 診断開始 diagnosisId=${diagnosisId}`);
+
+  try {
+    const fileBlocks = buildFileContentBlocks(entry.files);
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: buildDetailPrompt(entry.question || '', entry.floors || '') }] }],
+    }, { timeout: 120 * 1000 }); // バックグラウンドは2分まで許容
+    const responseText = message.content[0].text.trim();
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('AIの応答形式が不正でした');
+    entry.result = JSON.parse(jsonMatch[0]);
+    entry.running = false;
+    console.log(`[BG] 診断完了 diagnosisId=${diagnosisId}`);
+    if (email) await sendDetailResultEmail(email, entry.result);
+  } catch (err) {
+    entry.running = false;
+    entry.bgError = err.message;
+    console.error(`[BG] 診断エラー diagnosisId=${diagnosisId}:`, err.message);
+    if (email) {
+      await sendUserConfirmation({
+        to: email,
+        subject: '【ArchiAI】AI詳細診断の処理について',
+        text: `診断処理中にエラーが発生しました。大変お手数ですが ArchiAI@outlook.jp までご連絡ください。\nお名前と決済日時をお知らせいただければ対応いたします。\n\n-- ArchiAI 間取り診断`,
+      });
+    }
+  }
+}
+
+// ユーザー向け決済確認メール
+async function sendUserConfirmation({ to, subject, text }) {
+  if (!to) { console.log('[Email] ユーザー宛先なし → スキップ'); return; }
+  if (MOCK_EMAIL) { console.log(`[Email mock user] to=${to} subject="${subject}"`); return; }
+  try {
+    await mailer.sendMail({ from: EMAIL_USER, to, subject, text });
+    console.log(`[Email] ユーザー向け送信完了: ${to}`);
+  } catch (e) {
+    console.error('[Email] ユーザー向け送信エラー:', e.message);
   }
 }
 
@@ -219,7 +351,14 @@ const MOCK_DETAIL = {
 };
 
 // ─── 診断プロンプト ────────────────────────────────────────────────────────────
-const DIAGNOSIS_PROMPT = `あなたは経験豊富な住宅建築士です。
+function buildFreePrompt(floors) {
+  const floorNote = floors === '平屋'
+    ? '\n- この建物は【平屋】です。2階・上階・階段に関する指摘は一切行わないこと。平屋として評価すること。'
+    : floors
+      ? `\n- この建物は【${floors}】です。指摘する階数は実際に存在する階のみに限定すること。`
+      : '';
+
+  return `あなたは経験豊富な住宅建築士です。
 アップロードされた間取り図を、以下の5観点で厳密に評価してください。
 
 【評価基準】
@@ -237,6 +376,7 @@ const DIAGNOSIS_PROMPT = `あなたは経験豊富な住宅建築士です。
 
 【評価から除外する観点】
 - 1階キッチンから2階への食事配膳（階段経由の配膳負担）は問題点・改善提案に含めない
+- トイレの位置は、建物全体の平面における中心部から大きく外れ、かつ反対側の端部に居室が集中しているなど明らかな配置上の問題がある場合にのみ指摘すること。トイレが建物の中央寄りや水回りゾーンにまとまっている場合は問題としない${floorNote}
 
 【重要：出力ルール】
 - 画像の内容にかかわらず、必ず以下のJSON形式のみを出力すること
@@ -245,10 +385,11 @@ const DIAGNOSIS_PROMPT = `あなたは経験豊富な住宅建築士です。
 
 【出力形式】
 {"scores":{"dosen":整数,"lighting":整数,"storage":整数,"space":整数,"future":整数},"total":整数,"not_floor_plan":false,"good_points":["良い点1","良い点2","良い点3"],"issues":["問題点1","問題点2","問題点3"],"suggestions":["改善の視点1","改善の視点2","改善の視点3"],"overall_comment":"所見を80〜120字で。"}`;
+}
 
 // 注意: suggestions/issues は「〜が見受けられます」「〜の可能性があります」「〜を確認することが有効かもしれません」
 // のような観察・示唆に留める。「強くお勧めします」「ぜひ」「必ず」「〜すべき」は使用しない。
-// 詳細な改善提案・具体的アドバイスは有料の詳細診断（DETAIL_PROMPT）でのみ提供する。
+// 詳細な改善提案・具体的アドバイスは有料の詳細診断（buildDetailPrompt）でのみ提供する。
 
 // ─── ファイルをClaudeコンテンツブロックに変換 ────────────────────────────────
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -308,6 +449,8 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
     }
 
     const fileBlocks = buildFileContentBlocks(files);
+    let floors = '';
+    try { floors = (JSON.parse(req.body.basicInfo || '{}')).floors || ''; } catch {}
 
     const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',  // 無料診断：低コスト
@@ -319,12 +462,12 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
             ...fileBlocks,
             {
               type: 'text',
-              text: DIAGNOSIS_PROMPT,
+              text: buildFreePrompt(floors),
             },
           ],
         },
       ],
-    });
+    }, { timeout: 40 * 1000 });
 
     const responseText = message.content[0].text.trim();
 
@@ -369,7 +512,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
 });
 
 // ─── AI詳細診断プロンプト ──────────────────────────────────────────────────────
-function buildDetailPrompt(question) {
+function buildDetailPrompt(question, floors = '') {
   const hasQ = question && question.trim();
   const questionSection = hasQ
     ? `\n【ユーザーからの質問】\n「${question.trim()}」\nこの質問に対して、間取り図を踏まえた上で具体的に回答してください。回答はuser_question_answerフィールドに150字以内で記載してください。\n`
@@ -381,6 +524,12 @@ function buildDetailPrompt(question) {
     ? ',"user_question":"質問テキスト","user_question_answer":"回答テキスト"'
     : '';
 
+  const floorNote = floors === '平屋'
+    ? '\n- この建物は【平屋】です。2階・上階・階段に関する指摘は一切行わないこと。平屋として評価すること。'
+    : floors
+      ? `\n- この建物は【${floors}】です。指摘する階数は実際に存在する階のみに限定すること。`
+      : '';
+
   return `あなたは経験豊富な住宅建築士です。
 この間取り図に対して、無料診断より踏み込んだ「有料レベルの詳細診断」を行ってください。
 ${questionSection}
@@ -390,13 +539,14 @@ ${questionSection}
 - 直接壁を共有している場合のみ「近接問題」として高優先度に挙げること
 - 実際に観察できる問題のみ指摘し、見えていない部分は推測で大げさに評価しないこと
 - 1階キッチンから2階への食事配膳（階段経由の配膳負担）は問題点・ストレス・改善提案に含めない
+- トイレの位置は、建物全体の平面における中心部から大きく外れ、かつ反対側の端部に居室が集中しているなど明らかな配置上の問題がある場合にのみ指摘すること。トイレが建物中央寄りや水回りゾーンにまとまっている場合は問題としない
 - 「監視性」という言葉は使用しない。子ども室の見守りに関する指摘は「見守りやすさ」「声が届きやすいか」などの表現を使うこと
 - 書斎・ワークスペースが独立した個室であることは問題点としない（プライバシーや集中環境として適切なため）
 - 間取り図に明確に記載・描画されていない室（サンルーム・ウッドデッキ等）は存在しないものとして扱い、問題点・ストレス・改善提案に含めない
 - 子供室とLDKの生活音干渉については、廊下・収納・ホール等が間に挟まっている場合は影響が軽減されるため問題点としない。直接隣接している場合のみ指摘すること
 - パントリーとWICの動線の分断は問題点としない（両室の間に直接的な機能的関係はないため）
 - ランドリールームから屋外への動線については、間取り図にデッキ・テラス・庭への出入り口が明確に描かれている場合のみ動線の可否を判断して指摘すること。屋外への出入り口が確認できない場合、または乾燥機使用の可能性がある場合は指摘しない
-- 玄関からリビングへのプライバシー不足は、玄関ドアを開けた正面に居室の出入り口が直接見える配置の場合のみ指摘すること。玄関とリビングの間に収納・壁・ホール等の遮蔽物がある場合は問題としない
+- 玄関からリビングへのプライバシー不足は、玄関ドアを開けた正面に居室の出入り口が直接見える配置の場合のみ指摘すること。玄関とリビングの間に収納・壁・ホール等の遮蔽物がある場合は問題としない${floorNote}
 
 【出力内容】
 1. priority_issues: 優先度の高い問題点を最大5つ。rank（1が最重要）、title（問題の名前）、detail（詳細な説明）、impact（実生活への具体的影響）を含める
@@ -432,7 +582,9 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
 
     const fileBlocks = buildFileContentBlocks(files);
     const question = req.body?.question || '';
-    const prompt = buildDetailPrompt(question);
+    let floors = req.body?.floors || '';
+    if (!floors) { try { floors = (JSON.parse(req.body?.basicInfo || '{}')).floors || ''; } catch {} }
+    const prompt = buildDetailPrompt(question, floors);
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',  // AI詳細診断：高品質
@@ -446,7 +598,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
           ],
         },
       ],
-    });
+    }, { timeout: 55 * 1000 });
 
     const responseText = message.content[0].text.trim();
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
@@ -521,8 +673,8 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
           product_data: {
             name: '一級建築士相談',
             description: couponCode
-              ? `間取りの妥当性チェック・テキストフィードバック（3営業日以内）※クーポン適用`
-              : '間取りの妥当性チェック・テキストフィードバック（3営業日以内）',
+              ? `間取りに関する参考意見の提示・テキストフィードバック（3営業日以内）※クーポン適用`
+              : '間取りに関する参考意見の提示・テキストフィードバック（3営業日以内）',
           },
           unit_amount: chargeAmount,
         },
@@ -532,6 +684,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
       customer_email: email,
       payment_intent_data: { receipt_email: email },
       metadata: {
+        plan: 'architect',
         name,
         email,
         message: (message || '').substring(0, 500),
@@ -540,6 +693,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
         familySize: familySize || '',
         ageGroup: ageGroup || '',
       },
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30分で期限切れ
       success_url: `${origin}/?payment=success`,
       cancel_url:  `${origin}/?payment=cancel`,
     });
@@ -569,7 +723,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
     const files = req.files || [];
     const question = req.body?.question || '';
     if (files.length > 0) {
-      tempDiagnosisStore.set(diagnosisId, { files, question, result: null, timestamp: Date.now() });
+      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', result: null, timestamp: Date.now() });
     }
     const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
 
@@ -603,7 +757,8 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
       mode: 'payment',
       customer_email: email,
       payment_intent_data: { receipt_email: email },
-      metadata: { name, email, structure: structure || '', floors: floors || '', diagnosisId },
+      metadata: { plan: 'ai', name, email, structure: structure || '', floors: floors || '', diagnosisId },
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30分で期限切れ
       success_url: `${origin}/?payment=ai-success${didParam}`,
       cancel_url:  `${origin}/?payment=cancel`,
     });
@@ -645,26 +800,35 @@ app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
     return res.json(MOCK_DETAIL);
   }
 
-  try {
-    const fileBlocks = buildFileContentBlocks(entry.files);
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
-      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: buildDetailPrompt(entry.question || '') }] }],
-    });
-    const responseText = message.content[0].text.trim();
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return res.status(500).json({ error: 'AIの応答形式が不正でした。再度お試しください。' });
-    let result;
-    try { result = JSON.parse(jsonMatch[0]); }
-    catch { return res.status(500).json({ error: 'AIの応答の解析に失敗しました。再度お試しください。' }); }
-    entry.result = result; // キャッシュ
-    res.json(result);
-  } catch (err) {
-    console.error('ID別詳細診断エラー:', err);
-    if (err.status === 429) return res.status(429).json({ error: 'しばらく時間をおいて再度お試しください。' });
-    res.status(500).json({ error: '詳細診断中にエラーが発生しました。再度お試しください。' });
+  // バックグラウンドジョブがまだ開始されていない場合のフォールバック
+  // （Webhook到着前に detail-by-id が呼ばれた場合 / Webhook未設定環境）
+  if (!entry.running && !entry.result && !entry.bgError) {
+    const fallbackEmail = paidFlags[req.params.id]?.email || '';
+    runDiagnosisAndEmail(req.params.id, fallbackEmail).catch(e =>
+      console.error('[detail-by-id] フォールバック診断エラー:', e.message)
+    );
   }
+
+  // バックグラウンドジョブ完了までポーリング
+  // Renderフリープランは30秒HTTP制限があるため25秒上限（有料プランなら60秒に変更可）
+  const POLL_TIMEOUT_MS = parseInt(process.env.DETAIL_POLL_TIMEOUT_MS || '25000', 10);
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1000));
+    if (entry.result) return res.json(entry.result);
+    if (entry.bgError) {
+      return res.status(500).json({
+        error: '診断中にエラーが発生しました。結果はメールにてお送りします。ご不明点は ArchiAI@outlook.jp までご連絡ください。',
+        code: 'bg_error',
+      });
+    }
+  }
+
+  // 50秒経過しても完了しない場合（バックグラウンドジョブは継続中）
+  return res.status(504).json({
+    error: '診断の処理にお時間がかかっています。完了次第、ご登録のメールアドレスに結果をお送りします。',
+    code: 'still_processing',
+  });
 });
 
 // ─── 建築士相談エンドポイント ──────────────────────────────────────────────────
@@ -757,7 +921,7 @@ app.post('/api/send-result', express.json(), async (req, res) => {
       if (suggestions.length) { body += `\n■ 改善提案\n`; suggestions.forEach(p => { body += `→ ${p}\n`; }); }
     }
 
-    body += `\n${'─'.repeat(40)}\n※ 本診断結果は参考情報です。実際の建築計画には専門家にご相談ください。\n※ 診断基準は一級建築士 齋藤泰地が監修しています。\n\nArchiAI 間取り診断\nhttps://archi-ai.onrender.com\n`;
+    body += `\n${'─'.repeat(40)}\n※ 本診断結果は参考情報です。実際の建築計画には専門家にご相談ください。\n※ 診断基準は一級建築士が監修しています。\n\nArchiAI 間取り診断\nhttps://archi-ai.onrender.com\n`;
 
     // ユーザーへ送信
     if (!MOCK_EMAIL) {

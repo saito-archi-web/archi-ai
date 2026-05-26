@@ -1096,6 +1096,11 @@ body {
   font-weight: 900;
   color: var(--primary);
 }
+.price-arrow {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+}
 .price-discount-label {
   font-size: 11px;
   font-weight: 600;
@@ -1103,6 +1108,33 @@ body {
   background: #C42230;
   padding: 2px 7px;
   border-radius: 10px;
+}
+
+/* クーポン適用済み表示 */
+.coupon-applied-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #F0F9F4;
+  border: 1px solid #A7D8B7;
+  border-radius: var(--r);
+  flex-wrap: wrap;
+}
+.coupon-applied-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--good);
+  padding: 3px 9px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.coupon-applied-detail {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2C6B3C;
 }
 
 /* クーポン入力 */
@@ -2271,6 +2303,76 @@ body {
 }
 .footer-link:hover { color: var(--primary); }
 a.footer-link { text-decoration: underline; text-decoration-color: var(--border); }
+
+/* ─── お問い合わせモーダル内メール ────────────────────────────────────────── */
+.contact-email-box {
+  margin-top: 12px;
+  text-align: center;
+}
+.contact-email-link {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--primary);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+}
+.contact-email-link:hover { text-decoration: underline; }
+
+/* ─── FAQ アコーディオン ──────────────────────────────────────────────────── */
+.faq-list {
+  margin-top: 4px;
+}
+.faq-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: 12px;
+}
+.faq-item {
+  border-top: 1px solid var(--border);
+}
+.faq-item:last-child {
+  border-bottom: 1px solid var(--border);
+}
+.faq-q {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font);
+  text-align: left;
+}
+.faq-q-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.5;
+}
+.faq-arrow {
+  font-size: 9px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.faq-a {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.75;
+  padding: 2px 2px 16px;
+  animation: faqOpen 0.18s ease;
+}
+@keyframes faqOpen {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 .footer-sep {
   font-size: 11px;

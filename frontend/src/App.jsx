@@ -105,11 +105,11 @@ const DETAIL_LOADING_MESSAGES = [
 ]
 
 const CATEGORIES = [
-  { key: 'dosen',    label: '動線',        desc: '移動効率・家事動線' },
-  { key: 'lighting', label: '採光・方位',   desc: '日当たり・自然光' },
-  { key: 'storage',  label: '収納計画',    desc: '配置の適切さ' },
-  { key: 'space',    label: '空間バランス', desc: '広さ・開放感' },
-  { key: 'future',   label: '将来対応',    desc: 'ライフスタイル変化' },
+  { key: 'dosen',    label: '動線',        desc: '部屋間の移動効率・家事動線のスムーズさ' },
+  { key: 'lighting', label: '採光・方位',   desc: '窓配置と方位による日当たり・自然光の確保' },
+  { key: 'storage',  label: '収納計画',    desc: '収納量・配置の使いやすさ・容量の適切さ' },
+  { key: 'space',    label: '空間バランス', desc: '各部屋の広さ配分・開放感・圧迫感の有無' },
+  { key: 'future',   label: '将来対応',    desc: '家族構成や生活スタイルの変化への対応力' },
 ]
 
 const COST_COLORS = {
@@ -447,11 +447,14 @@ export default function App() {
   const testMode = authenticated
   // 診断結果別画面
   const [resultsView, setResultsView]         = useState(null) // null | 'free' | 'detail' | 'ai-loading'
+  // AI詳細診断ID（リトライ用に保持）
+  const [aiDiagnosisId, setAiDiagnosisId]     = useState(null)
   // 法的ページモーダル
   const [showTokusho, setShowTokusho]         = useState(false)
   const [showPrivacy, setShowPrivacy]         = useState(false)
   const [showSupervisor, setShowSupervisor]   = useState(false)
   const [showTerms, setShowTerms]             = useState(false)
+  const [showContact, setShowContact]         = useState(false)
 
   // スプラッシュ＋スクロール復元防止
   useEffect(() => {
@@ -484,6 +487,12 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.get('payment') === 'cancel') {
+      // Stripeセッション期限切れ／ユーザー自身によるキャンセルの両方に対応
+      setPaymentDone('cancel')
+      window.history.replaceState({}, '', '/')
+    } else if (params.get('payment') === 'expired') {
+      // 明示的にセッション期限切れを検知した場合
+      setError('決済セッションの有効期限（30分）が切れました。お手数ですが最初からお申し込みをやり直してください。')
       setPaymentDone('cancel')
       window.history.replaceState({}, '', '/')
     } else if (params.get('payment') === 'success') {
@@ -493,55 +502,33 @@ export default function App() {
       const did = params.get('did')
       window.history.replaceState({}, '', '/')
       if (did) {
-        // 決済後即時診断：保存したファイルで診断実行
-        setResultsView('ai-loading')
-        setIsDetailLoading(true)
-        setLoadingMsg(DETAIL_LOADING_MESSAGES[0])
-        setLoadingPct(5)
-        fetch(`/api/diagnose/detail-by-id/${did}`)
-          .then(r => r.json())
-          .then(data => {
-            // サーバー再起動によるデータ消失（決済済みだがファイルが消えた）
-            if (data.error === 'paid_data_lost') {
-              setError(data.message)
-              setResultsView(null)
-              setIsDetailLoading(false)
-              setPaymentDone('ai')
-              return
-            }
-            if (data.error) throw new Error(data.error)
-            setLoadingPct(100)
-            setTimeout(() => {
-              saveDetailToStorage(data, null, null)
-              setDetailDiagnosis(data)
-              setResultsView('detail')
-              setIsDetailLoading(false)
-            }, 600)
-          })
-          .catch(err => {
-            setError(err.message)
-            setResultsView(null)
-            setIsDetailLoading(false)
-            setPaymentDone('ai') // フォールバック：従来の完了画面
-          })
+        setAiDiagnosisId(did)
+        fetchDetailById(did)
       } else {
         setPaymentDone('ai')
       }
     }
   }, [])
 
-  // ローディングメッセージ
+  // ローディングメッセージ＆プログレス
   useEffect(() => {
     if (!isLoading && !isDetailLoading) return
     const msgs = isDetailLoading ? DETAIL_LOADING_MESSAGES : LOADING_MESSAGES
     let i = 0
+    let slowIv = null
     const iv = setInterval(() => {
       i = Math.min(i + 1, msgs.length - 1)
       setLoadingMsg(msgs[i])
       setLoadingPct(Math.round(((i + 1) / msgs.length) * 90))
-      if (i === msgs.length - 1) clearInterval(iv)
+      if (i === msgs.length - 1) {
+        clearInterval(iv)
+        // 90%以降は3秒ごとに1%ずつ緩やかに進める（最大98%）
+        slowIv = setInterval(() => {
+          setLoadingPct(prev => Math.min(prev + 1, 98))
+        }, 3000)
+      }
     }, 1400)
-    return () => clearInterval(iv)
+    return () => { clearInterval(iv); if (slowIv) clearInterval(slowIv) }
   }, [isLoading, isDetailLoading])
 
   // ─── スクロールナビゲーション ─────────────────────────────────────────────────
@@ -641,7 +628,13 @@ export default function App() {
         basicInfo:     bInfo    ?? basicInfo,
         savedAt: Date.now(),
       }))
-    } catch {}
+      return true
+    } catch (e) {
+      console.error('[LocalStorage] 保存失敗:', e.message)
+      // 容量超過などで保存失敗した場合はユーザーに通知
+      setError('診断結果の端末への保存に失敗しました。ブラウザのストレージ容量をご確認ください。結果はこの画面でのみ閲覧可能です。')
+      return false
+    }
   }
 
   // 前回の詳細診断結果を localStorage から復元
@@ -721,6 +714,54 @@ export default function App() {
     window.location.href = data.url
   }
 
+  const fetchDetailById = (did) => {
+    setResultsView('ai-loading')
+    setIsDetailLoading(true)
+    setLoadingMsg(DETAIL_LOADING_MESSAGES[0])
+    setLoadingPct(5)
+    setError(null)
+    fetch(`/api/diagnose/detail-by-id/${did}`)
+      .then(async r => {
+        const data = await r.json()
+        if (r.status === 404) throw Object.assign(new Error('session_not_found'), { code: 'session_not_found' })
+        if (r.status === 504) throw Object.assign(new Error(data.error || '処理中'), { code: data.code || 'still_processing' })
+        return data
+      })
+      .then(data => {
+        if (data.error === 'paid_data_lost') {
+          setError(data.message)
+          setResultsView(null)
+          setIsDetailLoading(false)
+          setPaymentDone('ai')
+          return
+        }
+        if (data.error) throw new Error(data.error)
+        setLoadingPct(100)
+        setTimeout(() => {
+          saveDetailToStorage(data, null, null)
+          setDetailDiagnosis(data)
+          setResultsView('detail')
+          setIsDetailLoading(false)
+        }, 600)
+      })
+      .catch(err => {
+        setIsDetailLoading(false)
+        if (err.code === 'session_not_found') {
+          setError('決済セッションの有効期限が切れたか、データが見つかりません。大変申し訳ございませんが、最初からお申し込みをやり直してください。決済が完了している場合は ArchiAI@outlook.jp までご連絡ください。')
+          setResultsView(null)
+          setPaymentDone('ai')
+        } else if (err.code === 'still_processing') {
+          // バックグラウンドで診断継続中 → リトライ画面を表示
+          setResultsView('ai-retry')
+          setError(err.message)
+        } else {
+          setError(err.message)
+          setResultsView(null)
+          setPaymentDone('ai')
+        }
+      })
+  }
+
   const handleReset = () => {
     setResultsView(null)
     setRevealed(['landing'])
@@ -728,10 +769,14 @@ export default function App() {
     setSelectedPlan(null); setFiles({}); setChecklist({})
     setDiagnosis(null); setDetailDiagnosis(null)
     setError(null); setIsLoading(false); setIsDetailLoading(false)
+    setAiDiagnosisId(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const withConsent = (plan, action) => setConsentModal({ plan, action })
+  const withConsent = (plan, action) => {
+    if (consentModal) return // 既にモーダル表示中なら無視
+    setConsentModal({ plan, action })
+  }
 
   // パスワード未認証の場合はゲート表示
   if (!authenticated) {
@@ -746,11 +791,59 @@ export default function App() {
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
+        {showContact    && <ContactModal    onClose={() => setShowContact(false)}    />}
         <AppHeader />
         <main className="app-main">
-          <LoadingScreen message={loadingMsg} pct={loadingPct} title="AI詳細診断中..." />
+          <LoadingScreen message={loadingMsg} pct={loadingPct} title="AI詳細診断中..." showEmailNote />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} onContact={() => setShowContact(true)} />
+      </div></div>
+    )
+  }
+
+  // AI詳細診断 処理中（リトライ画面）
+  if (resultsView === 'ai-retry') {
+    return (
+      <div className="app"><div className="app-content app-content--visible">
+        {showTokusho    && <TokushoModal    onClose={() => setShowTokusho(false)}    />}
+        {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
+        {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
+        {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
+        {showContact    && <ContactModal    onClose={() => setShowContact(false)}    />}
+        <AppHeader />
+        <main className="app-main">
+          <div className="screen screen-center">
+            <div className="done-wrap">
+              <div className="done-icon" style={{ background: '#F59E0B', fontSize: 28 }}>⏳</div>
+              <h2 className="done-title">診断を処理中です</h2>
+              <p className="done-sub">サーバー側で診断を継続しています</p>
+              <div className="done-card">
+                <p className="done-message" style={{ fontWeight: 600, marginBottom: 8 }}>
+                  完了次第、ご登録のメールアドレスに診断結果をお送りします。
+                </p>
+                <p className="done-message">
+                  通常数分以内に届きます。迷惑メールフォルダもご確認ください。
+                </p>
+                <p className="done-message" style={{ marginTop: 12, fontSize: 12, color: '#9CA3AF' }}>
+                  ※ メールが届かない場合は ArchiAI@outlook.jp までお問い合わせください（お名前・決済日時をお知らせください）。
+                </p>
+              </div>
+              {aiDiagnosisId && (
+                <button
+                  className="btn-primary"
+                  style={{ marginTop: 8 }}
+                  onClick={() => fetchDetailById(aiDiagnosisId)}
+                >
+                  もう一度結果を確認する
+                </button>
+              )}
+              <button className="btn-ghost" onClick={() => { setResultsView(null); setPaymentDone(null); setError(null) }}>
+                トップに戻る
+              </button>
+            </div>
+          </div>
+        </main>
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} onContact={() => setShowContact(true)} />
       </div></div>
     )
   }
@@ -763,6 +856,7 @@ export default function App() {
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
+        {showContact    && <ContactModal    onClose={() => setShowContact(false)}    />}
         <AppHeader />
         <main className="app-main">
           <ResultsScreen
@@ -774,7 +868,7 @@ export default function App() {
             error={error}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} onContact={() => setShowContact(true)} />
       </div></div>
     )
   }
@@ -787,6 +881,7 @@ export default function App() {
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
+        {showContact    && <ContactModal    onClose={() => setShowContact(false)}    />}
         <AppHeader />
         <main className="app-main">
           <ConsultScreen
@@ -797,7 +892,7 @@ export default function App() {
             fromAiDiagnosis={true}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} onContact={() => setShowContact(true)} />
       </div></div>
     )
   }
@@ -809,6 +904,7 @@ export default function App() {
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
+        {showContact    && <ContactModal    onClose={() => setShowContact(false)}    />}
         <AppHeader />
         <main className="app-main">
           <DetailScreen
@@ -820,7 +916,7 @@ export default function App() {
             onBack={() => setResultsView('free')}
           />
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} onContact={() => setShowContact(true)} />
       </div></div>
     )
   }
@@ -834,6 +930,7 @@ export default function App() {
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
+        {showContact    && <ContactModal    onClose={() => setShowContact(false)}    />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -849,10 +946,19 @@ export default function App() {
               {isCancel ? (
                 <>
                   <div className="done-icon" style={{ background: '#9CA3AF' }}>×</div>
-                  <h2 className="done-title">お支払いがキャンセルされました</h2>
-                  <p className="done-sub">決済は行われていません。</p>
+                  <h2 className="done-title">{error ? '決済セッションが無効です' : 'お支払いがキャンセルされました'}</h2>
+                  <p className="done-sub">{error ? '有効期限が切れた可能性があります。' : '決済は行われていません。'}</p>
                   <div className="done-card">
-                    <p className="done-message">お申し込みを続ける場合は、再度フォームからお手続きください。</p>
+                    {error ? (
+                      <p className="done-message">{error}</p>
+                    ) : (
+                      <>
+                        <p className="done-message">お申し込みを続ける場合は、再度フォームからお手続きください。</p>
+                        <p className="done-message" style={{ marginTop: '8px', fontSize: '12px', color: '#787878' }}>
+                          ※ 決済ページの有効期限は30分です。時間が経過すると再度お申し込みが必要になります。
+                        </p>
+                      </>
+                    )}
                   </div>
                 </>
               ) : error ? (
@@ -897,7 +1003,7 @@ export default function App() {
             </div>
           </div>
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} onContact={() => setShowContact(true)} />
       </div>
     )
   }
@@ -921,6 +1027,7 @@ export default function App() {
         {showPrivacy    && <PrivacyModal    onClose={() => setShowPrivacy(false)}    />}
         {showSupervisor && <SupervisorModal onClose={() => setShowSupervisor(false)} />}
         {showTerms      && <TermsModal      onClose={() => setShowTerms(false)}      />}
+        {showContact    && <ContactModal    onClose={() => setShowContact(false)}    />}
         <header className="app-header">
           <div className="logo">
             <LogoMark />
@@ -1006,11 +1113,19 @@ export default function App() {
                   message={loadingMsg}
                   pct={loadingPct}
                   title={isDetailLoading ? '詳細分析中...' : 'AIが診断中...'}
+                  showEmailNote={isDetailLoading}
                 />
               ) : (
                 <div className="screen">
                   <div className="error-box">{error}</div>
-                  <BackButton targetId="preview" label="戻って再試行する" />
+                  <button
+                    className="btn-primary"
+                    onClick={() => { setError(null); handleDiagnose() }}
+                    style={{ marginTop: 12 }}
+                  >
+                    もう一度診断する
+                  </button>
+                  <BackButton targetId="preview" label="戻ってファイルを確認する" />
                 </div>
               )}
             </section>
@@ -1049,7 +1164,7 @@ export default function App() {
           )}
 
         </main>
-        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} />
+        <AppFooter onTokusho={() => setShowTokusho(true)} onPrivacy={() => setShowPrivacy(true)} onSupervisor={() => setShowSupervisor(true)} onTerms={() => setShowTerms(true)} onContact={() => setShowContact(true)} />
       </div>
     </div>
   )
@@ -1095,6 +1210,45 @@ function ConsentModal({ plan, onAgree, onCancel }) {
 
 // ─── ランディング画面 ──────────────────────────────────────────────────────────
 
+const FAQ_ITEMS = [
+  {
+    q: 'どんな間取り図をアップロードできますか？',
+    a: 'PDF・JPEG・PNG・WebPに対応しています。建築会社から受け取った間取り図はPDFでのアップロードを推奨しています。PDFはベクターデータのため線や文字が鮮明で、AIが最も正確に読み取れます。スマートフォンで撮影した画像も利用できますが、PDFと比べると認識精度が下がる場合があります。',
+  },
+  {
+    q: '手書きの間取り図でも診断できますか？',
+    a: 'はい、手書きの間取り図でも診断可能です。ただし文字・線がはっきり読み取れる画像ほど診断精度が上がります。傾きや反射が少ない状態で撮影することをおすすめします。',
+  },
+  {
+    q: '無料診断とAI詳細診断の違いは何ですか？',
+    a: '使用するAIモデルが異なります。無料診断はClaude Haiku（速度・コスト重視）を使用し、5項目スコアとAIからの総評コメントを提供します。AI詳細診断（有料）はより高精度なClaude Sonnetを使用し、各項目の具体的な改善提案・改修コストの目安・優先度など踏み込んだ分析レポートが得られます。',
+  },
+  {
+    q: 'スコアはどのように算出されますか？',
+    a: '一級建築士が監修した評価基準をもとに、AIが間取り図を画像解析してスコアリングします。動線効率・採光・収納量・空間バランス・ライフステージ対応性の5項目をそれぞれ0〜100点で評価します。',
+  },
+  {
+    q: '診断結果はどのくらい信頼できますか？',
+    a: 'AI診断はモデルによる統計的推定のため、必ずしも正確とは限りません。参考情報としてご活用ください。一方、一級建築士への個別相談プランはAIを介さず、専門家が直接ご回答するものです。間取りや建築計画について具体的に踏み込んだ意見が必要な場合は、相談プランの利用をおすすめします。',
+  },
+  {
+    q: '診断結果はどのくらい保存されますか？',
+    a: 'AI詳細診断の結果はお客様のブラウザのLocalStorageに最大30日間保存されます。同じ端末・ブラウザであれば期間内に再表示できます。異なる端末やブラウザからは閲覧できません。',
+  },
+  {
+    q: '間取り図はどこに保存されますか？',
+    a: 'アップロードされた間取り図はAI分析のためAnthropicのサーバー（米国）に送信されます。本サービス独自のサーバーには保存されません。Anthropic側のデータ保持・破棄ポリシーについては、Anthropicのプライバシーポリシーをご参照ください。',
+  },
+  {
+    q: 'AIはどのシステムを使っていますか？',
+    a: 'Anthropic社（米国）が提供するClaude API（大規模言語モデル）を使用して間取り図を分析します。診断基準は一級建築士が監修しています。',
+  },
+  {
+    q: '個人情報・データを削除したい',
+    a: 'ブラウザに保存された診断結果はご自身でブラウザの設定（LocalStorage）から削除できます。サーバー側に保存されているデータ（メールアドレス・支払い記録）の削除を希望される場合は ArchiAI@outlook.jp までお名前・ご利用日時をお知らせください。ご本人確認の上、合理的な期間内に対応いたします。',
+  },
+]
+
 function LandingScreen({ onStart, onViewSaved }) {
   const [hasSaved, setHasSaved] = useState(false)
   useEffect(() => {
@@ -1118,7 +1272,7 @@ function LandingScreen({ onStart, onViewSaved }) {
 
       <div className="landing-features">
         {[
-          { icon: '診', cls: 'lfi-blue',   title: '一級建築士監修の診断基準', desc: '評価項目・採点基準はすべて一級建築士が設計・監修' },
+          { icon: '診', cls: 'lfi-blue',   title: '一級建築士監修の診断基準', desc: '評価項目・採点基準はすべて一級建築士が監修' },
           { icon: 'AI', cls: 'lfi-orange', title: 'AIが5項目を瞬時に評価',   desc: '動線・採光・収納・空間・将来性をスコアリング' },
           { icon: '相', cls: 'lfi-green',  title: '必要なら直接相談も可能',   desc: '一級建築士への個別相談プランもご用意' },
         ].map(f => (
@@ -1338,7 +1492,7 @@ function PreviewScreen({ files, primaryFile, selectedPlan, onDiagnose, onBackId,
 
 // ─── ローディング画面 ──────────────────────────────────────────────────────────
 
-function LoadingScreen({ message, pct, title }) {
+function LoadingScreen({ message, pct, title, showEmailNote }) {
   return (
     <div className="screen screen-center">
       <div className="loading-wrap">
@@ -1348,7 +1502,12 @@ function LoadingScreen({ message, pct, title }) {
         </div>
         <h2 className="loading-title">{title}</h2>
         <p className="loading-msg">{message}</p>
-        <p className="loading-hint">一級建築士 齋藤泰地 監修の診断基準で分析しています</p>
+        <p className="loading-hint">一級建築士監修の診断基準で分析しています</p>
+        {showEmailNote && (
+          <p className="loading-hint" style={{ marginTop: 6, color: '#9CA3AF' }}>
+            処理が長引いた場合は、ご登録のメールアドレスにも結果をお送りします
+          </p>
+        )}
       </div>
     </div>
   )
@@ -1436,11 +1595,22 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         <div className="section">
           <h3 className="section-title">AIからの総評</h3>
           <div className="comment-card"><p className="comment-text">「{overall_comment}」</p></div>
-          <p className="supervisor-caption">※ 診断基準は一級建築士 齋藤泰地（登録番号：○○号）が監修しています</p>
+          <p className="supervisor-caption">※ 診断基準は一級建築士が監修しています</p>
         </div>
       )}
 
-      {error && <div className="error-box" style={{ marginBottom: 16 }}>{error}</div>}
+      {error && (
+        <div style={{ marginBottom: 16 }}>
+          <div className="error-box">{error}</div>
+          <button
+            className="btn-primary"
+            onClick={onDetailDiagnose}
+            style={{ marginTop: 8 }}
+          >
+            もう一度試す
+          </button>
+        </div>
+      )}
 
       <div className="premium-section">
         <p className="premium-label">さらに詳しく知りたい方へ</p>
@@ -1463,7 +1633,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
             <span className="premium-card-price">¥3,000</span>
           </div>
           <ul className="premium-list">
-            <li>一級建築士による間取りの妥当性チェック</li>
+            <li>一級建築士による間取りへの参考意見の提示</li>
             <li>動線・方位・収納・圧迫感の指摘</li>
             <li>テキストコメント付きフィードバック</li>
           </ul>
@@ -1604,7 +1774,7 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
         <div className="section">
           <h3 className="section-title">AIからの verdict</h3>
           <div className="verdict-card"><p className="verdict-text">{verdict}</p></div>
-          <p className="supervisor-caption">※ 診断基準は一級建築士 齋藤泰地（登録番号：○○号）が監修しています</p>
+          <p className="supervisor-caption">※ 診断基準は一級建築士が監修しています</p>
         </div>
       )}
 
@@ -1646,7 +1816,7 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
             <span className="premium-card-price">¥3,000</span>
           </div>
           <ul className="premium-list">
-            <li>一級建築士による間取りの妥当性チェック</li>
+            <li>一級建築士による間取りへの参考意見の提示</li>
             <li>動線・方位・収納・圧迫感の指摘</li>
             <li>テキストコメント付きフィードバック</li>
           </ul>
@@ -1745,12 +1915,12 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
       <div className="consult-hero">
         <div className="detail-badge">一級建築士による第三者相談</div>
         <h2 className="detail-title">専門家に<br />直接聞いてみる</h2>
-        <p className="consult-sub">建築士が間取りの妥当性をチェックし、テキストでフィードバックします。</p>
+        <p className="consult-sub">建築士が間取りに関する参考意見をテキストでフィードバックします。</p>
       </div>
 
       <div className="consult-info-card">
         <p className="consult-info-title">サービス内容</p>
-        {['間取りの妥当性チェック（法規確認は除く）','動線・方位・収納・圧迫感の指摘','テキストコメントでのフィードバック','3営業日以内にメールでご連絡'].map((t,i)=>(
+        {['間取りに関する参考意見の提示（法規確認は除く）','動線・方位・収納・圧迫感の指摘','テキストコメントでのフィードバック','3営業日以内にメールでご連絡'].map((t,i)=>(
           <div key={i} className="consult-info-row"><span className="consult-info-icon">✓</span><span>{t}</span></div>
         ))}
         <div className="consult-price-row">
@@ -1758,13 +1928,19 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
           {coupon ? (
             <span className="consult-price">
               <span className="price-original">¥3,000</span>
-              <span className="price-discounted">¥{finalPrice.toLocaleString()}（税込）</span>
-              <span className="price-discount-label">{coupon.label}</span>
+              <span className="price-arrow">→</span>
+              <span className="price-discounted">¥{finalPrice.toLocaleString()}</span>
             </span>
           ) : (
             <span className="consult-price">¥3,000</span>
           )}
         </div>
+        {coupon && (
+          <div className="coupon-applied-box">
+            <span className="coupon-applied-badge">✓ クーポン適用中</span>
+            <span className="coupon-applied-detail">{coupon.label}（¥{coupon.discount.toLocaleString()}割引）</span>
+          </div>
+        )}
         {basicInfo.structure && (
           <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</span></div>
         )}
@@ -1975,15 +2151,15 @@ function PrivacyModal({ onClose }) {
           <p className="legal-section-title">4. 外部サービスの利用</p>
           <ul className="legal-list">
             <li><strong>Google reCAPTCHA v3</strong>：不正アクセス防止のために使用します。Googleの<a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>および<a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">利用規約</a>が適用されます。</li>
-            <li><strong>Anthropic Claude API</strong>：間取り図の分析に使用します。アップロードされた画像・テキストはAnthropicのサーバー（米国）で処理されます。Anthropic社の定めるポリシーに基づき、入力データは原則としてモデルの学習には使用されません（APIご利用規約に準拠）。処理後の画像データはAnthropicのシステム上に一時的に保持されますが、当社サーバーには診断完了後も画像は保存されません。詳細はAnthropicの<a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>をご参照ください。</li>
+            <li><strong>Anthropic Claude API</strong>：間取り図の分析に使用します。アップロードされた画像・テキストはAnthropicのサーバー（米国）で処理されます。Anthropic社の定めるポリシーに基づき、入力データは原則としてモデルの学習には使用されません（APIご利用規約に準拠）。処理後の画像データはAnthropicのシステム上に一時的に保持されますが、本サービスのサーバーには診断完了後も画像は保存されません。詳細はAnthropicの<a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a>をご参照ください。</li>
             <li><strong>Stripe</strong>：決済処理に使用します。カード情報は当サービスには保存されません。</li>
           </ul>
 
           <p className="legal-section-title">5. 診断結果の保存</p>
-          <p className="legal-text">AI詳細診断の結果はお客様のブラウザのローカルストレージに最大30日間保存されます。このデータは同一ブラウザ・端末からのみアクセス可能で、当社サーバーには保存されません。</p>
+          <p className="legal-text">AI詳細診断の結果はお客様のブラウザのローカルストレージに最大30日間保存されます。このデータは同一ブラウザ・端末からのみアクセス可能で、本サービスのサーバーには保存されません。</p>
 
           <p className="legal-section-title">6. お問い合わせ</p>
-          <p className="legal-text">個人情報に関するお問い合わせは <strong>ArchiAI@outlook.jp</strong> までご連絡ください。</p>
+          <p className="legal-text">個人情報に関するお問い合わせは <strong>ArchiAI@outlook.jp</strong> までご連絡ください。保有個人データの開示・訂正・利用停止・消去を希望される場合も、お名前・ご利用日時を添えて同アドレスまでご連絡ください。ご本人確認の上、合理的な期間内に対応いたします。</p>
 
           <p className="legal-footer-note">制定日：2026年4月</p>
         </div>
@@ -1994,7 +2170,7 @@ function PrivacyModal({ onClose }) {
 
 // ─── フッター ─────────────────────────────────────────────────────────────────
 
-function AppFooter({ onTokusho, onPrivacy, onSupervisor, onTerms }) {
+function AppFooter({ onTokusho, onPrivacy, onSupervisor, onTerms, onContact }) {
   return (
     <footer className="app-footer">
       <div className="footer-links">
@@ -2006,7 +2182,7 @@ function AppFooter({ onTokusho, onPrivacy, onSupervisor, onTerms }) {
         <span className="footer-sep">|</span>
         <button className="footer-link" onClick={onSupervisor}>監修者について</button>
         <span className="footer-sep">|</span>
-        <a className="footer-link" href="mailto:ArchiAI@outlook.jp">お問い合わせ</a>
+        <button className="footer-link" onClick={onContact}>お問い合わせ</button>
       </div>
       <p className="footer-recaptcha">
         このサイトはreCAPTCHAによって保護されており、Googleの
@@ -2015,6 +2191,53 @@ function AppFooter({ onTokusho, onPrivacy, onSupervisor, onTerms }) {
       </p>
       <p className="footer-copy">© 2026 ArchiAI. All rights reserved.</p>
     </footer>
+  )
+}
+
+// ─── お問い合わせモーダル（FAQ含む） ──────────────────────────────────────────
+
+function ContactModal({ onClose }) {
+  const [openFaq, setOpenFaq] = useState(null)
+  return (
+    <div className="legal-modal-overlay" onClick={onClose}>
+      <div className="legal-modal" onClick={e => e.stopPropagation()}>
+        <button className="legal-modal-close" onClick={onClose}>×</button>
+        <h2 className="legal-modal-title">お問い合わせ</h2>
+        <div className="legal-modal-body">
+
+          <p className="legal-section-title">メールでのお問い合わせ</p>
+          <p className="legal-text">
+            サービスに関するご質問・ご要望・個人情報の削除依頼などは下記までご連絡ください。
+          </p>
+          <p className="contact-email-box">
+            <a href="mailto:ArchiAI@outlook.jp" className="contact-email-link">ArchiAI@outlook.jp</a>
+          </p>
+          <p className="legal-text" style={{ marginTop: 8, fontSize: 12 }}>
+            ※ 通常2〜3営業日以内にご返信いたします。
+          </p>
+
+          <p className="legal-section-title" style={{ marginTop: 24 }}>よくある質問</p>
+          <div className="faq-list">
+            {FAQ_ITEMS.map((item, i) => (
+              <div key={i} className="faq-item">
+                <button
+                  className="faq-q"
+                  onClick={() => setOpenFaq(openFaq === i ? null : i)}
+                  aria-expanded={openFaq === i}
+                >
+                  <span className="faq-q-text">{item.q}</span>
+                  <span className="faq-arrow">{openFaq === i ? '▲' : '▼'}</span>
+                </button>
+                {openFaq === i && (
+                  <p className="faq-a">{item.a}</p>
+                )}
+              </div>
+            ))}
+          </div>
+
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -2032,7 +2255,7 @@ function SupervisorModal({ onClose }) {
               <tr><th>氏名</th><td>齋藤泰地</td></tr>
               <tr><th>資格</th><td>一級建築士</td></tr>
               <tr><th>登録番号</th><td>○○号</td></tr>
-              <tr><th>監修内容</th><td>診断基準（評価項目・採点ロジック・AIプロンプト）の設計・監修</td></tr>
+              <tr><th>監修内容</th><td>診断基準（評価項目・採点ロジック・AIプロンプト）の監修</td></tr>
             </tbody>
           </table>
           <p className="legal-text" style={{ marginTop: 12 }}>
@@ -2054,53 +2277,74 @@ function TermsModal({ onClose }) {
         <h2 className="legal-modal-title">利用規約</h2>
         <div className="legal-modal-body">
 
-          <p className="legal-text">本利用規約（以下「本規約」）は、齋藤泰地（以下「当社」）が提供するArchiAI 間取り診断サービス（以下「本サービス」）の利用条件を定めるものです。本サービスをご利用になる方（以下「ユーザー」）は、本規約に同意したものとみなします。</p>
+          <p className="legal-text">本利用規約（以下「本規約」）は、齋藤泰地（以下「運営者」）が提供するArchiAI 間取り診断サービス（以下「本サービス」）の利用条件を定めるものです。本サービスをご利用になる方（以下「ユーザー」）は、本規約に同意したものとみなします。</p>
 
-          <p className="legal-section-title">第1条（AIの出力結果の性質および免責）</p>
+          <p className="legal-section-title">第1条（共通事項）</p>
           <ol className="legal-list">
-            <li>本サービスが提供するAI診断結果（以下「診断結果」）は、機械学習モデルによる統計的推定に基づく参考情報であり、その正確性・完全性・最新性を保証するものではありません。</li>
+            <li>本サービスのAI診断機能には、Anthropic社（米国）が提供するClaude API（大規模言語モデル）を使用しています。ユーザーは本サービスの利用にあたり、Anthropic社の定めるAPI利用規約およびプライバシーポリシーに間接的に同意したものとみなされます。</li>
+            <li>本サービスのAI診断結果（以下「診断結果」）は、機械学習モデルによる統計的推定に基づく参考情報であり、その正確性・完全性・最新性を保証するものではありません。</li>
             <li>診断結果は、建築計画・設計・施工の意思決定のための唯一の根拠として使用することはできません。実際の建築計画等においては、必ず一級建築士・二級建築士その他の専門家にご相談ください。</li>
-            <li>当社は、診断結果の誤り・不正確な情報等によって生じた損害について、当社に故意または重大な過失がある場合を除き、一切の責任を負いません。</li>
-            <li>前項の責任限定は、消費者契約法その他の強行法規に反する範囲においては適用されません。</li>
+            <li>以下の免責規定は、消費者契約法その他の強行法規に反する範囲においては適用されません。</li>
+          </ol>
+
+          <p className="legal-section-title">第1条の2（無料診断の免責）</p>
+          <ol className="legal-list">
+            <li>無料診断（無償で提供される5項目スコア・総評コメント）は、サービスの簡易的な体験を目的として提供されるものであり、診断結果の正確性・有用性については一切保証されません。</li>
+            <li>運営者は、無料診断の結果により生じた直接・間接の損害について、一切の責任を負いません。</li>
+          </ol>
+
+          <p className="legal-section-title">第1条の3（AI詳細診断の免責）</p>
+          <ol className="legal-list">
+            <li>AI詳細診断（有料）は、より高精度なAIモデル（Claude Sonnet）を使用した分析レポートですが、AIによる統計的推定に基づく参考情報である点に変わりはなく、結果の正確性・完全性は保証されません。</li>
+            <li>運営者は、AI詳細診断の結果により生じた損害について、運営者に故意または重大な過失がある場合を除き、責任を負いません。</li>
+            <li>前項の賠償責任は、当該AI詳細診断にユーザーが実際に支払った料金の額を上限とします。</li>
+          </ol>
+
+          <p className="legal-section-title">第1条の4（一級建築士相談の免責）</p>
+          <ol className="legal-list">
+            <li>一級建築士相談プランは、一級建築士がAIを介さず直接ご回答するサービスです。AI診断と比較して高い信頼性を目指しますが、提供されるのは間取りに関する参考意見であり、法令上の「設計業務」に該当するものではありません。</li>
+            <li>相談の結果に基づき、実際の建築・施工・申請を行う場合は、別途設計業務を受託する建築士事務所への正式な委託が必要となります。</li>
+            <li>運営者は、一級建築士相談の結果により生じた損害について、運営者に故意または重大な過失がある場合を除き、責任を負いません。前項の賠償責任は、当該相談にユーザーが実際に支払った料金の額を上限とします。</li>
           </ol>
 
           <p className="legal-section-title">第2条（建築士法その他法令との関係）</p>
           <ol className="legal-list">
             <li>本サービスが提供する診断結果は、建築士法（昭和25年法律第202号）第2条第6項に定める「設計」（設計図書の作成）には該当せず、建築士による業務の代替を目的とするものではありません。</li>
             <li>本サービスは、建築物の建築工事実施のために必要な図面・仕様書等の作成を行うものではありません。</li>
+            <li>一級建築士相談プランは、建築士法上の「設計業務」には該当せず、間取りに関する一般的な参考意見の提示にとどまります。最終的な建築計画・設計・施工の判断はユーザーの責任で行っていただく必要があり、運営者は当該相談結果に基づく設計責任を負いません。</li>
           </ol>
 
           <p className="legal-section-title">第3条（著作権・知的財産権）</p>
           <ol className="legal-list">
-            <li>本サービスに含まれるコンテンツの著作権その他の知的財産権は、当社または正当な権利者に帰属します。</li>
-            <li>ユーザーが本サービスに入力した間取り図・テキスト等の著作権はユーザーに帰属します。ただし、ユーザーは当社に対し、サービス提供・運営改善の目的に限り、当該コンテンツを無償かつ非独占的に利用する権利を許諾するものとします。</li>
-            <li>当社はユーザーに対し、診断結果を個人的・非商業的目的に使用する権利を許諾します。商業利用については別途当社の許可が必要です。</li>
+            <li>本サービスに含まれるコンテンツの著作権その他の知的財産権は、運営者または正当な権利者に帰属します。</li>
+            <li>ユーザーが本サービスに入力した間取り図・テキスト等の著作権はユーザーに帰属します。ただし、ユーザーは運営者に対し、サービス提供・運営改善の目的に限り、当該コンテンツを無償かつ非独占的に利用する権利を許諾するものとします。</li>
+            <li>運営者はユーザーに対し、診断結果を個人的・非商業的目的に使用する権利を許諾します。商業利用については別途運営者の許可が必要です。</li>
           </ol>
 
           <p className="legal-section-title">第4条（禁止事項）</p>
           <p className="legal-text">ユーザーは、以下の行為を行ってはなりません。</p>
           <ol className="legal-list">
-            <li>診断結果・コンテンツを当社の書面による事前承諾なく第三者へ再配布・転載・販売すること</li>
+            <li>診断結果・コンテンツを運営者の書面による事前承諾なく第三者へ再配布・転載・販売すること</li>
             <li>本サービスを競合するAI診断サービスの開発・学習データ収集・ベンチマーキングを目的として利用すること</li>
             <li>本サービスをリバースエンジニアリング・逆コンパイル・逆アセンブルする行為</li>
             <li>本サービスの運営を妨害するような過度な負荷をかける行為</li>
-            <li>当社または第三者の著作権・商標権・その他知的財産権を侵害する行為</li>
-            <li>当社または第三者の名誉・プライバシーを侵害する行為</li>
+            <li>運営者または第三者の著作権・商標権・その他知的財産権を侵害する行為</li>
+            <li>運営者または第三者の名誉・プライバシーを侵害する行為</li>
             <li>法令・公序良俗に反するその他の行為</li>
           </ol>
 
           <p className="legal-section-title">第5条（サービスの変更・中断・終了）</p>
           <ol className="legal-list">
-            <li>当社は、事前に通知することにより、本サービスの内容・機能・料金体系を変更することができます。</li>
-            <li>当社は、システム保守・天災・法令上の理由等により、本サービスを一時中断することがあります。</li>
-            <li>当社は、30日以上の予告期間を設けた上で本サービスを終了することができます。</li>
-            <li>前各項に定める変更・中断・終了によってユーザーに生じた損害について、当社に故意または重大な過失がある場合を除き、当社は責任を負いません。</li>
+            <li>運営者は、事前に通知することにより、本サービスの内容・機能・料金体系を変更することができます。</li>
+            <li>運営者は、システム保守・天災・法令上の理由等により、本サービスを一時中断することがあります。</li>
+            <li>運営者は、30日以上の予告期間を設けた上で本サービスを終了することができます。</li>
+            <li>前各項に定める変更・中断・終了によってユーザーに生じた損害について、運営者に故意または重大な過失がある場合を除き、運営者は責任を負いません。</li>
           </ol>
 
           <p className="legal-section-title">第6条（未成年者の利用）</p>
           <ol className="legal-list">
             <li>有料コンテンツについては、18歳未満の方はご利用いただけません。</li>
-            <li>当社がユーザーを未成年者と認識した場合は、当社の判断により利用を制限または停止することができます。</li>
+            <li>運営者がユーザーを未成年者と認識した場合は、運営者の判断により利用を制限または停止することができます。</li>
           </ol>
 
           <p className="legal-section-title">第7条（準拠法および管轄裁判所）</p>
@@ -2109,7 +2353,7 @@ function TermsModal({ onClose }) {
             <li>本サービスに関連して生じた紛争については、訴額に応じ、東京簡易裁判所または東京地方裁判所を第一審の専属的合意管轄裁判所とします。</li>
           </ol>
 
-          <p className="legal-text" style={{ marginTop: 16 }}>制定日：2026年1月1日</p>
+          <p className="legal-text" style={{ marginTop: 16 }}>制定日：2026年4月1日</p>
         </div>
       </div>
     </div>
