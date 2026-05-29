@@ -277,7 +277,7 @@ async function runDiagnosisAndEmail(diagnosisId, email) {
     const responseText = message.content[0].text.trim();
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('AIの応答形式が不正でした');
-    entry.result = JSON.parse(jsonMatch[0]);
+    entry.result = filterDiagnosisResult(JSON.parse(jsonMatch[0]), entry.floors || '', entry.familySize || '');
     entry.running = false;
     console.log(`[BG] 診断完了 diagnosisId=${diagnosisId}`);
     if (email) await sendDetailResultEmail(email, entry.result);
@@ -309,6 +309,73 @@ async function sendUserConfirmation({ to, subject, text }) {
 
 const MOCK_MODE = !process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'your_anthropic_api_key_here';
 const client = MOCK_MODE ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// ─── ファクトチェックフィルター（0追加トークン・ルールベース） ───────────────────
+// 入力された前提条件と矛盾する診断項目をサーバー側で除去する
+
+// 階数ごとに「出てはいけないワード」を定義
+const FLOOR_FORBIDDEN_WORDS = {
+  '平屋':    ['2階', '二階', '2F', '上階', '上の階', '上層', '2つ目の階', '階段'],
+  '2階建て': ['3階', '三階', '3F', '4階', '上の階'],
+  '3階建て': ['4階', '四階', '4F', '5階'],
+};
+
+// 家族構成ごとに「出てはいけないワード」を定義
+const FAMILY_FORBIDDEN_WORDS = {
+  '1人': ['子ども', '子供', '子育て', '育児', 'お子', 'キッズ', '子ども部屋', '子供部屋', '保育'],
+};
+
+function filterDiagnosisResult(result, floors, familySize) {
+  if (!result) return result;
+
+  const forbidden = [
+    ...(FLOOR_FORBIDDEN_WORDS[floors]      || []),
+    ...(FAMILY_FORBIDDEN_WORDS[familySize] || []),
+  ];
+  if (forbidden.length === 0) return result;
+
+  const hasForbidden = (text) =>
+    text && forbidden.some(w => text.includes(w));
+
+  const filterArr = (arr) =>
+    Array.isArray(arr) ? arr.filter(s => !hasForbidden(typeof s === 'string' ? s : null)) : arr;
+
+  const filterObjArr = (arr, keys) =>
+    Array.isArray(arr) ? arr.filter(obj => !keys.some(k => hasForbidden(obj?.[k]))) : arr;
+
+  const before = {
+    issues:       result.issues?.length || 0,
+    suggestions:  result.suggestions?.length || 0,
+    good_points:  result.good_points?.length || 0,
+    priority:     result.priority_issues?.length || 0,
+    life_stress:  result.life_stress?.length || 0,
+    suggestions2: result.detailed_suggestions?.length || 0,
+  };
+
+  const filtered = {
+    ...result,
+    issues:               filterArr(result.issues),
+    suggestions:          filterArr(result.suggestions),
+    good_points:          filterArr(result.good_points),
+    priority_issues:      filterObjArr(result.priority_issues,      ['title', 'detail', 'impact']),
+    life_stress:          filterArr(result.life_stress),
+    detailed_suggestions: filterObjArr(result.detailed_suggestions, ['action', 'reason']),
+  };
+
+  // 除去件数をログ（デバッグ用）
+  const removed =
+    (before.issues       - (filtered.issues?.length || 0)) +
+    (before.suggestions  - (filtered.suggestions?.length || 0)) +
+    (before.priority     - (filtered.priority_issues?.length || 0)) +
+    (before.life_stress  - (filtered.life_stress?.length || 0)) +
+    (before.suggestions2 - (filtered.detailed_suggestions?.length || 0));
+
+  if (removed > 0) {
+    console.log(`[FactFilter] floors="${floors}" family="${familySize}" → ${removed}件の矛盾項目を除去`);
+  }
+
+  return filtered;
+}
 
 if (MOCK_MODE) console.log('[モード] APIキー未設定 → モックデータで動作します');
 
@@ -491,20 +558,25 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
       return res.status(500).json({ error: 'AIの応答形式が不正でした。再度お試しください。' });
     }
 
-    const result = JSON.parse(jsonMatch[0]);
+    const rawResult = JSON.parse(jsonMatch[0]);
 
     // 間取り図以外の画像チェック
-    if (result.not_floor_plan) {
+    if (rawResult.not_floor_plan) {
       return res.status(400).json({ error: '間取り図が読み取れませんでした。間取りの平面図をアップロードしてください。' });
     }
 
     // 必須フィールドの検証
     const required = ['scores', 'total', 'good_points', 'issues', 'suggestions', 'overall_comment'];
     for (const field of required) {
-      if (!(field in result)) {
+      if (!(field in rawResult)) {
         return res.status(500).json({ error: '診断結果の形式が不完全でした。再度お試しください。' });
       }
     }
+
+    // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
+    let basicInfoParsed = {};
+    try { basicInfoParsed = JSON.parse(req.body.basicInfo || '{}'); } catch {}
+    const result = filterDiagnosisResult(rawResult, floors, basicInfoParsed.familySize || '');
 
     res.json(result);
   } catch (err) {
@@ -627,6 +699,12 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
       console.error('Response length:', responseText.length);
       return res.status(500).json({ error: 'AIの応答の解析に失敗しました。再度お試しください。' });
     }
+
+    // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
+    let detailFamilySize = req.body?.familySize || '';
+    if (!detailFamilySize) { try { detailFamilySize = (JSON.parse(req.body?.basicInfo || '{}')).familySize || ''; } catch {} }
+    result = filterDiagnosisResult(result, floors, detailFamilySize);
+
     res.json(result);
   } catch (err) {
     console.error('詳細診断エラー:', err);
@@ -722,7 +800,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
 // ファイルも受け取り、一時保存してIDを発行。決済後に即時診断できるようにする。
 app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
-    const { name, email, structure, floors } = req.body;
+    const { name, email, structure, floors, familySize } = req.body;
     if (!name || !email) {
       return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
     }
@@ -736,7 +814,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
     const files = req.files || [];
     const question = req.body?.question || '';
     if (files.length > 0) {
-      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', result: null, timestamp: Date.now() });
+      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', familySize: familySize || '', result: null, timestamp: Date.now() });
     }
     const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
 
