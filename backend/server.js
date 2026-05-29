@@ -203,12 +203,25 @@ const mailer = nodemailer.createTransport({
   secure: false,
   auth: { user: EMAIL_USER, pass: EMAIL_PASS },
   tls: { ciphers: 'SSLv3' },
+  connectionTimeout: 10000,  // SMTP接続タイムアウト 10秒
+  greetingTimeout:   10000,  // SMTPグリーティング待機 10秒
+  socketTimeout:     15000,  // ソケット無通信タイムアウト 15秒
 });
+
+// タイムアウト付き sendMail ラッパー
+function sendMailWithTimeout(options, timeoutMs = 20000) {
+  return Promise.race([
+    mailer.sendMail(options),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('メール送信がタイムアウトしました（20秒）')), timeoutMs)
+    ),
+  ]);
+}
 
 async function sendNotification({ subject, text, attachments = [] }) {
   if (MOCK_EMAIL) { console.log(`[Email mock] subject="${subject}" attachments=${attachments.length}`); return; }
   try {
-    await mailer.sendMail({ from: EMAIL_USER, to: NOTIFY_EMAIL, subject, text, attachments });
+    await sendMailWithTimeout({ from: EMAIL_USER, to: NOTIFY_EMAIL, subject, text, attachments });
     console.log(`[Email] 送信完了: ${subject}`);
   } catch (e) {
     console.error('[Email] 送信エラー:', e.message);
@@ -287,7 +300,7 @@ async function sendUserConfirmation({ to, subject, text }) {
   if (!to) { console.log('[Email] ユーザー宛先なし → スキップ'); return; }
   if (MOCK_EMAIL) { console.log(`[Email mock user] to=${to} subject="${subject}"`); return; }
   try {
-    await mailer.sendMail({ from: EMAIL_USER, to, subject, text });
+    await sendMailWithTimeout({ from: EMAIL_USER, to, subject, text });
     console.log(`[Email] ユーザー向け送信完了: ${to}`);
   } catch (e) {
     console.error('[Email] ユーザー向け送信エラー:', e.message);
@@ -923,11 +936,9 @@ app.post('/api/send-result', express.json(), async (req, res) => {
 
     body += `\n${'─'.repeat(40)}\n※ 本診断結果は参考情報です。実際の建築計画には専門家にご相談ください。\n※ 診断基準は一級建築士が監修しています。\n\nArchiAI 間取り診断\nhttps://archi-ai.onrender.com\n`;
 
-    // ユーザーへ送信
+    // ユーザーへ送信（タイムアウト付き・エラーは呼び出し元に伝播）
     if (!MOCK_EMAIL) {
-      try {
-        await mailer.sendMail({ from: EMAIL_USER, to: email, subject, text: body });
-      } catch (e) { console.error('[Email] 結果送信エラー:', e.message); }
+      await sendMailWithTimeout({ from: EMAIL_USER, to: email, subject, text: body });
     } else {
       console.log(`[Email mock] 結果送信 → ${email} subject="${subject}"`);
     }
