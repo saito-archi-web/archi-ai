@@ -118,10 +118,11 @@ const COST_COLORS = {
   '設計変更必要': { bg: '#FEE2E2', color: '#991B1B' },
 }
 
-const STRUCTURE_OPTIONS = ['木造', '鉄骨造', '鉄筋コンクリート造', 'わからない']
-const FLOOR_OPTIONS     = ['平屋', '2階建て', '3階建て']
-const FAMILY_OPTIONS    = ['1人', '2人', '3人', '4人', '5人以上']
-const AGE_OPTIONS       = ['20代', '30代', '40代', '50代', '60代以上']
+const STRUCTURE_OPTIONS  = ['木造', '鉄骨造', '鉄筋コンクリート造', 'わからない']
+const FLOOR_OPTIONS      = ['平屋', '2階建て', '3階建て']
+const FAMILY_OPTIONS     = ['1人', '2人', '3人', '4人', '5人以上']
+const CHILDREN_OPTIONS   = ['0人', '1人', '2人', '3人以上']
+const AGE_OPTIONS        = ['20代', '30代', '40代', '50代', '60代以上']
 const BUDGET_OPTIONS    = ['〜2,000万', '2,000万〜3,000万', '3,000万〜4,000万', '5,000万〜6,000万', '6,000万〜8,000万', '8,000万以上']
 
 const CHECK_ITEMS = [
@@ -418,7 +419,7 @@ export default function App() {
   // セクション表示管理
   const [revealed, setRevealed]               = useState(['landing'])
   // フォームデータ
-  const [basicInfo, setBasicInfo]             = useState({ structure: '', floors: '', familySize: '', ageGroup: '', budget: '' })
+  const [basicInfo, setBasicInfo]             = useState({ structure: '', floors: '', familySize: '', childrenCount: '', ageGroup: '', budget: '' })
   const [selectedPlan, setSelectedPlan]       = useState(null)
   const [files, setFiles]                     = useState({})
   const [checklist, setChecklist]             = useState({})
@@ -686,10 +687,13 @@ export default function App() {
 
     // 本番Stripeモード：ファイルも送りIDを取得、決済後に即時診断
     const fd = buildFormData()
-    fd.append('name',      form.name)
-    fd.append('email',     form.email)
-    fd.append('structure', basicInfo.structure || '')
-    fd.append('floors',    basicInfo.floors    || '')
+    fd.append('name',          form.name)
+    fd.append('email',         form.email)
+    fd.append('structure',     basicInfo.structure     || '')
+    fd.append('floors',        basicInfo.floors        || '')
+    fd.append('familySize',    basicInfo.familySize    || '')
+    fd.append('childrenCount', basicInfo.childrenCount || '')
+    fd.append('ageGroup',      basicInfo.ageGroup      || '')
     if (form.question?.trim()) fd.append('question', form.question.trim())
     const res = await fetch('/api/create-ai-checkout-session', { method: 'POST', body: fd })
     const data = await res.json()
@@ -702,10 +706,11 @@ export default function App() {
     fd.append('name', form.name)
     fd.append('email', form.email)
     fd.append('message', form.message || '')
-    fd.append('structure',   basicInfo.structure   || '')
-    fd.append('floors',      basicInfo.floors      || '')
-    fd.append('familySize',  basicInfo.familySize  || '')
-    fd.append('ageGroup',    basicInfo.ageGroup    || '')
+    fd.append('structure',     basicInfo.structure     || '')
+    fd.append('floors',        basicInfo.floors        || '')
+    fd.append('familySize',    basicInfo.familySize    || '')
+    fd.append('childrenCount', basicInfo.childrenCount || '')
+    fd.append('ageGroup',      basicInfo.ageGroup      || '')
     if (form.price && form.price !== 3000) fd.append('price', form.price)
     if (form.couponCode) fd.append('couponCode', form.couponCode)
     const res = await fetch('/api/create-checkout-session', { method: 'POST', body: fd })
@@ -765,7 +770,7 @@ export default function App() {
   const handleReset = () => {
     setResultsView(null)
     setRevealed(['landing'])
-    setBasicInfo({ structure: '', floors: '', familySize: '', ageGroup: '', budget: '' })
+    setBasicInfo({ structure: '', floors: '', familySize: '', childrenCount: '', ageGroup: '', budget: '' })
     setSelectedPlan(null); setFiles({}); setChecklist({})
     setDiagnosis(null); setDetailDiagnosis(null)
     setError(null); setIsLoading(false); setIsDetailLoading(false)
@@ -1300,15 +1305,16 @@ function LandingScreen({ onStart, onViewSaved }) {
 // ─── 基本情報入力画面 ──────────────────────────────────────────────────────────
 
 function BasicInfoScreen({ basicInfo, onChange, onNext, onBackId }) {
-  const isComplete = basicInfo.structure && basicInfo.floors && basicInfo.familySize && basicInfo.ageGroup
+  const isComplete = basicInfo.structure && basicInfo.floors && basicInfo.familySize && basicInfo.childrenCount && basicInfo.ageGroup
   return (
     <div className="screen">
       <div className="info-fields">
         {[
-          { label: '構造方式',     options: STRUCTURE_OPTIONS, key: 'structure' },
-          { label: '階数',         options: FLOOR_OPTIONS,     key: 'floors' },
-          { label: '家族人数',     options: FAMILY_OPTIONS,    key: 'familySize' },
-          { label: '世帯主の年齢', options: AGE_OPTIONS,       key: 'ageGroup' },
+          { label: '構造方式',       options: STRUCTURE_OPTIONS, key: 'structure' },
+          { label: '階数',           options: FLOOR_OPTIONS,     key: 'floors' },
+          { label: '家族人数',       options: FAMILY_OPTIONS,    key: 'familySize' },
+          { label: '子どもの人数',   options: CHILDREN_OPTIONS,  key: 'childrenCount' },
+          { label: '世帯主の年齢',   options: AGE_OPTIONS,       key: 'ageGroup' },
         ].map(({ label, options, key }) => (
           <div key={key} className="info-field">
             <label className="info-label">{label}</label>
@@ -1556,7 +1562,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         <div className="grade-chip" style={{ background: grade.color }}>{grade.rank}ランク</div>
         <p className="grade-text" style={{ color: grade.color }}>{grade.text}</p>
         {basicInfo.structure && (
-          <p className="result-basic-info">{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</p>
+          <p className="result-basic-info">{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · 子ども{basicInfo.childrenCount} · {basicInfo.ageGroup}</p>
         )}
       </div>
 
@@ -1942,7 +1948,7 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
           </div>
         )}
         {basicInfo.structure && (
-          <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</span></div>
+          <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · 子ども{basicInfo.childrenCount} · {basicInfo.ageGroup}</span></div>
         )}
         <p className="consult-disclaimer">※ 設計責任は負いません。参考意見としてご活用ください。</p>
         <p className="consult-disclaimer">※ AI診断と一級建築士による診断では、観点や指摘内容が異なる場合があります。</p>
@@ -2031,9 +2037,9 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
         {['無料診断の全項目','優先度付き問題点リスト（最大5件）','「住んでから気づく」生活ストレス予測','コスト感付きの具体的改善策','ピンポイント質疑応答（1問）'].map((t,i)=>(
           <div key={i} className="consult-info-row"><span className="consult-info-icon">✓</span><span>{t}</span></div>
         ))}
-        <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥300</span></div>
+        <div className="consult-price-row"><span>診断料</span><span className="consult-price">¥500</span></div>
         {basicInfo.structure && (
-          <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · {basicInfo.ageGroup}</span></div>
+          <div className="consult-basic-info"><span>建物情報：</span><span>{basicInfo.structure} · {basicInfo.floors} · {basicInfo.familySize}家族 · 子ども{basicInfo.childrenCount} · {basicInfo.ageGroup}</span></div>
         )}
         <p className="consult-disclaimer">※ AIによる診断のため、必ずしも正確とは限りません。重要な判断は必ず専門家にご確認ください。</p>
       </div>

@@ -272,12 +272,12 @@ async function runDiagnosisAndEmail(diagnosisId, email) {
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: buildDetailPrompt(entry.question || '', { floors: entry.floors || '', familySize: entry.familySize || '', ageGroup: entry.ageGroup || '' }) }] }],
+      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: buildDetailPrompt(entry.question || '', { floors: entry.floors || '', familySize: entry.familySize || '', ageGroup: entry.ageGroup || '', childrenCount: entry.childrenCount || '' }) }] }],
     }, { timeout: 120 * 1000 }); // バックグラウンドは2分まで許容
     const responseText = message.content[0].text.trim();
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('AIの応答形式が不正でした');
-    entry.result = filterDiagnosisResult(JSON.parse(jsonMatch[0]), entry.floors || '', entry.familySize || '');
+    entry.result = filterDiagnosisResult(JSON.parse(jsonMatch[0]), entry.floors || '', entry.familySize || '', entry.childrenCount || '');
     entry.running = false;
     console.log(`[BG] 診断完了 diagnosisId=${diagnosisId}`);
     if (email) await sendDetailResultEmail(email, entry.result);
@@ -320,17 +320,16 @@ const FLOOR_FORBIDDEN_WORDS = {
   '3階建て': ['4階', '四階', '4F', '5階'],
 };
 
-// 家族構成ごとに「出てはいけないワード」を定義
-const FAMILY_FORBIDDEN_WORDS = {
-  '1人': ['子ども', '子供', '子育て', '育児', 'お子', 'キッズ', '子ども部屋', '子供部屋', '保育'],
-};
+// 子どもなし判定で使う禁止ワード
+const NO_CHILDREN_FORBIDDEN_WORDS = ['子ども', '子供', '子育て', '育児', 'お子', 'キッズ', '子ども部屋', '子供部屋', '保育', '通学'];
 
-function filterDiagnosisResult(result, floors, familySize) {
+function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
   if (!result) return result;
 
+  const hasNoChildren = familySize === '1人' || childrenCount === '0人';
   const forbidden = [
-    ...(FLOOR_FORBIDDEN_WORDS[floors]      || []),
-    ...(FAMILY_FORBIDDEN_WORDS[familySize] || []),
+    ...(FLOOR_FORBIDDEN_WORDS[floors] || []),
+    ...(hasNoChildren ? NO_CHILDREN_FORBIDDEN_WORDS : []),
   ];
   if (forbidden.length === 0) return result;
 
@@ -371,7 +370,7 @@ function filterDiagnosisResult(result, floors, familySize) {
     (before.suggestions2 - (filtered.detailed_suggestions?.length || 0));
 
   if (removed > 0) {
-    console.log(`[FactFilter] floors="${floors}" family="${familySize}" → ${removed}件の矛盾項目を除去`);
+    console.log(`[FactFilter] floors="${floors}" family="${familySize}" children="${childrenCount}" → ${removed}件の矛盾項目を除去`);
   }
 
   return filtered;
@@ -433,7 +432,7 @@ const MOCK_DETAIL = {
 // ─── 診断プロンプト ────────────────────────────────────────────────────────────
 
 // ユーザー入力の前提条件をプロンプトの禁止事項として組み立てる
-function buildContextNote({ floors = '', familySize = '', ageGroup = '' } = {}) {
+function buildContextNote({ floors = '', familySize = '', ageGroup = '', childrenCount = '' } = {}) {
   const notes = [];
 
   // 階数条件
@@ -445,9 +444,12 @@ function buildContextNote({ floors = '', familySize = '', ageGroup = '' } = {}) 
     notes.push('この建物は【3階建て】です。4階以上の階への指摘は行わないこと。');
   }
 
-  // 家族人数条件
-  if (familySize === '1人') {
-    notes.push('居住者は【1人（単身）】です。子育て・育児・子ども部屋・子供部屋・キッズ・保育に関する指摘は行わないこと。家族増加を前提とした将来対応の指摘も行わないこと。');
+  // 子どもの人数条件（familySize=1人 または childrenCount=0人 → 子どもなし）
+  const hasNoChildren = familySize === '1人' || childrenCount === '0人';
+  if (hasNoChildren) {
+    notes.push('子どもはいません。子育て・育児・子ども部屋・子供部屋・キッズ・保育・通学に関する指摘は行わないこと。家族増加を前提とした将来対応の指摘も行わないこと。');
+  } else if (childrenCount && childrenCount !== '0人') {
+    notes.push(`子どもは【${childrenCount}】います。子ども部屋の配置・採光・音環境・安全性（階段・バルコニー等）を重視して評価すること。`);
   }
 
   // 年齢条件
@@ -601,7 +603,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
     }
 
     // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
-    const result = filterDiagnosisResult(rawResult, floors, basicInfoParsed.familySize || '');
+    const result = filterDiagnosisResult(rawResult, floors, basicInfoParsed.familySize || '', basicInfoParsed.childrenCount || '');
 
     res.json(result);
   } catch (err) {
@@ -690,9 +692,10 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
     const question = req.body?.question || '';
     let detailInfo = {};
     try { detailInfo = JSON.parse(req.body?.basicInfo || '{}'); } catch {}
-    if (req.body?.floors)      detailInfo.floors      = req.body.floors;
-    if (req.body?.familySize)  detailInfo.familySize  = req.body.familySize;
-    if (req.body?.ageGroup)    detailInfo.ageGroup    = req.body.ageGroup;
+    if (req.body?.floors)         detailInfo.floors         = req.body.floors;
+    if (req.body?.familySize)     detailInfo.familySize     = req.body.familySize;
+    if (req.body?.ageGroup)       detailInfo.ageGroup       = req.body.ageGroup;
+    if (req.body?.childrenCount)  detailInfo.childrenCount  = req.body.childrenCount;
     const floors = detailInfo.floors || '';
     const prompt = buildDetailPrompt(question, detailInfo);
 
@@ -726,7 +729,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
     }
 
     // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
-    result = filterDiagnosisResult(result, floors, detailInfo.familySize || '');
+    result = filterDiagnosisResult(result, floors, detailInfo.familySize || '', detailInfo.childrenCount || '');
 
     res.json(result);
   } catch (err) {
@@ -823,7 +826,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
 // ファイルも受け取り、一時保存してIDを発行。決済後に即時診断できるようにする。
 app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
-    const { name, email, structure, floors, familySize, ageGroup } = req.body;
+    const { name, email, structure, floors, familySize, ageGroup, childrenCount } = req.body;
     if (!name || !email) {
       return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
     }
@@ -837,7 +840,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
     const files = req.files || [];
     const question = req.body?.question || '';
     if (files.length > 0) {
-      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', familySize: familySize || '', ageGroup: ageGroup || '', result: null, timestamp: Date.now() });
+      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', familySize: familySize || '', ageGroup: ageGroup || '', childrenCount: childrenCount || '', result: null, timestamp: Date.now() });
     }
     const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
 
@@ -864,7 +867,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
             name: 'AI詳細診断',
             description: '優先度付き問題点リスト・生活ストレス予測・具体的改善策',
           },
-          unit_amount: 300,
+          unit_amount: 500,
         },
         quantity: 1,
       }],
