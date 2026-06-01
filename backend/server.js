@@ -272,7 +272,7 @@ async function runDiagnosisAndEmail(diagnosisId, email) {
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: buildDetailPrompt(entry.question || '', entry.floors || '') }] }],
+      messages: [{ role: 'user', content: [...fileBlocks, { type: 'text', text: buildDetailPrompt(entry.question || '', { floors: entry.floors || '', familySize: entry.familySize || '', ageGroup: entry.ageGroup || '' }) }] }],
     }, { timeout: 120 * 1000 }); // バックグラウンドは2分まで許容
     const responseText = message.content[0].text.trim();
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
@@ -431,12 +431,38 @@ const MOCK_DETAIL = {
 };
 
 // ─── 診断プロンプト ────────────────────────────────────────────────────────────
-function buildFreePrompt(floors) {
-  const floorNote = floors === '平屋'
-    ? '\n- この建物は【平屋】です。2階・上階・階段に関する指摘は一切行わないこと。平屋として評価すること。'
-    : floors
-      ? `\n- この建物は【${floors}】です。指摘する階数は実際に存在する階のみに限定すること。`
-      : '';
+
+// ユーザー入力の前提条件をプロンプトの禁止事項として組み立てる
+function buildContextNote({ floors = '', familySize = '', ageGroup = '' } = {}) {
+  const notes = [];
+
+  // 階数条件
+  if (floors === '平屋') {
+    notes.push('この建物は【平屋（1階建て）】です。2階・上階・上層・階段に関する指摘は一切行わないこと。平屋として評価すること。');
+  } else if (floors === '2階建て') {
+    notes.push('この建物は【2階建て】です。3階以上の階への指摘は行わないこと。');
+  } else if (floors === '3階建て') {
+    notes.push('この建物は【3階建て】です。4階以上の階への指摘は行わないこと。');
+  }
+
+  // 家族人数条件
+  if (familySize === '1人') {
+    notes.push('居住者は【1人（単身）】です。子育て・育児・子ども部屋・子供部屋・キッズ・保育に関する指摘は行わないこと。家族増加を前提とした将来対応の指摘も行わないこと。');
+  }
+
+  // 年齢条件
+  if (ageGroup === '60代以上') {
+    notes.push('世帯主は【60代以上】です。バリアフリー・段差・手すり・介護動線・将来の身体機能低下への対応を重視して評価すること。');
+  } else if (ageGroup === '20代') {
+    notes.push('世帯主は【20代】です。老後の介護・身体機能低下を前提とした指摘の優先度は下げること。');
+  }
+
+  if (notes.length === 0) return '';
+  return '\n【前提条件（厳守）】\n' + notes.map(n => `- ${n}`).join('\n');
+}
+
+function buildFreePrompt(basicInfo = {}) {
+  const contextNote = buildContextNote(basicInfo);
 
   return `あなたは経験豊富な住宅建築士です。
 アップロードされた間取り図を、以下の5観点で厳密に評価してください。
@@ -456,7 +482,7 @@ function buildFreePrompt(floors) {
 
 【評価から除外する観点】
 - 1階キッチンから2階への食事配膳（階段経由の配膳負担）は問題点・改善提案に含めない
-- トイレの位置は、建物全体の平面における中心部から大きく外れ、かつ反対側の端部に居室が集中しているなど明らかな配置上の問題がある場合にのみ指摘すること。トイレが建物の中央寄りや水回りゾーンにまとまっている場合は問題としない${floorNote}
+- トイレの位置は、建物全体の平面における中心部から大きく外れ、かつ反対側の端部に居室が集中しているなど明らかな配置上の問題がある場合にのみ指摘すること。トイレが建物の中央寄りや水回りゾーンにまとまっている場合は問題としない${contextNote}
 
 【重要：出力ルール】
 - 画像の内容にかかわらず、必ず以下のJSON形式のみを出力すること
@@ -529,8 +555,9 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
     }
 
     const fileBlocks = buildFileContentBlocks(files);
-    let floors = '';
-    try { floors = (JSON.parse(req.body.basicInfo || '{}')).floors || ''; } catch {}
+    let basicInfoParsed = {};
+    try { basicInfoParsed = JSON.parse(req.body.basicInfo || '{}'); } catch {}
+    const floors = basicInfoParsed.floors || '';
 
     const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',  // 無料診断：低コスト
@@ -542,7 +569,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
             ...fileBlocks,
             {
               type: 'text',
-              text: buildFreePrompt(floors),
+              text: buildFreePrompt(basicInfoParsed),
             },
           ],
         },
@@ -574,8 +601,6 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
     }
 
     // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
-    let basicInfoParsed = {};
-    try { basicInfoParsed = JSON.parse(req.body.basicInfo || '{}'); } catch {}
     const result = filterDiagnosisResult(rawResult, floors, basicInfoParsed.familySize || '');
 
     res.json(result);
@@ -597,7 +622,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
 });
 
 // ─── AI詳細診断プロンプト ──────────────────────────────────────────────────────
-function buildDetailPrompt(question, floors = '') {
+function buildDetailPrompt(question, basicInfo = {}) {
   const hasQ = question && question.trim();
   const questionSection = hasQ
     ? `\n【ユーザーからの質問】\n「${question.trim()}」\nこの質問に対して、間取り図を踏まえた上で具体的に回答してください。回答はuser_question_answerフィールドに150字以内で記載してください。\n`
@@ -609,11 +634,7 @@ function buildDetailPrompt(question, floors = '') {
     ? ',"user_question":"質問テキスト","user_question_answer":"回答テキスト"'
     : '';
 
-  const floorNote = floors === '平屋'
-    ? '\n- この建物は【平屋】です。2階・上階・階段に関する指摘は一切行わないこと。平屋として評価すること。'
-    : floors
-      ? `\n- この建物は【${floors}】です。指摘する階数は実際に存在する階のみに限定すること。`
-      : '';
+  const contextNote = buildContextNote(basicInfo);
 
   return `あなたは経験豊富な住宅建築士です。
 この間取り図に対して、無料診断より踏み込んだ「有料レベルの詳細診断」を行ってください。
@@ -631,7 +652,7 @@ ${questionSection}
 - 子供室とLDKの生活音干渉については、廊下・収納・ホール等が間に挟まっている場合は影響が軽減されるため問題点としない。直接隣接している場合のみ指摘すること
 - パントリーとWICの動線の分断は問題点としない（両室の間に直接的な機能的関係はないため）
 - ランドリールームから屋外への動線については、間取り図にデッキ・テラス・庭への出入り口が明確に描かれている場合のみ動線の可否を判断して指摘すること。屋外への出入り口が確認できない場合、または乾燥機使用の可能性がある場合は指摘しない
-- 玄関からリビングへのプライバシー不足は、玄関ドアを開けた正面に居室の出入り口が直接見える配置の場合のみ指摘すること。玄関とリビングの間に収納・壁・ホール等の遮蔽物がある場合は問題としない${floorNote}
+- 玄関からリビングへのプライバシー不足は、玄関ドアを開けた正面に居室の出入り口が直接見える配置の場合のみ指摘すること。玄関とリビングの間に収納・壁・ホール等の遮蔽物がある場合は問題としない${contextNote}
 
 【出力内容】
 1. priority_issues: 優先度の高い問題点を最大5つ。rank（1が最重要）、title（問題の名前）、detail（詳細な説明）、impact（実生活への具体的影響）を含める
@@ -667,9 +688,13 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
 
     const fileBlocks = buildFileContentBlocks(files);
     const question = req.body?.question || '';
-    let floors = req.body?.floors || '';
-    if (!floors) { try { floors = (JSON.parse(req.body?.basicInfo || '{}')).floors || ''; } catch {} }
-    const prompt = buildDetailPrompt(question, floors);
+    let detailInfo = {};
+    try { detailInfo = JSON.parse(req.body?.basicInfo || '{}'); } catch {}
+    if (req.body?.floors)      detailInfo.floors      = req.body.floors;
+    if (req.body?.familySize)  detailInfo.familySize  = req.body.familySize;
+    if (req.body?.ageGroup)    detailInfo.ageGroup    = req.body.ageGroup;
+    const floors = detailInfo.floors || '';
+    const prompt = buildDetailPrompt(question, detailInfo);
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',  // AI詳細診断：高品質
@@ -701,9 +726,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
     }
 
     // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
-    let detailFamilySize = req.body?.familySize || '';
-    if (!detailFamilySize) { try { detailFamilySize = (JSON.parse(req.body?.basicInfo || '{}')).familySize || ''; } catch {} }
-    result = filterDiagnosisResult(result, floors, detailFamilySize);
+    result = filterDiagnosisResult(result, floors, detailInfo.familySize || '');
 
     res.json(result);
   } catch (err) {
@@ -800,7 +823,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
 // ファイルも受け取り、一時保存してIDを発行。決済後に即時診断できるようにする。
 app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
-    const { name, email, structure, floors, familySize } = req.body;
+    const { name, email, structure, floors, familySize, ageGroup } = req.body;
     if (!name || !email) {
       return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
     }
@@ -814,7 +837,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
     const files = req.files || [];
     const question = req.body?.question || '';
     if (files.length > 0) {
-      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', familySize: familySize || '', result: null, timestamp: Date.now() });
+      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', familySize: familySize || '', ageGroup: ageGroup || '', result: null, timestamp: Date.now() });
     }
     const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
 
