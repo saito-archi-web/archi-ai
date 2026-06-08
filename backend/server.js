@@ -253,8 +253,9 @@ async function sendDetailResultEmail(email, result) {
     body += `\n■ ご質問への回答\nQ: ${user_question}\nA: ${user_question_answer}\n`;
   }
   body += `\n${'─'.repeat(40)}\n※ 本診断結果は参考情報です。実際の建築計画には専門家にご相談ください。\n※ 診断基準は一級建築士が監修しています。\n\nArchiAI 間取り診断\nhttps://archi-ai.onrender.com\n`;
-  await sendUserConfirmation({ to: email, subject: '【ArchiAI】AI詳細診断レポートをお届けします', text: body });
-  console.log(`[BG] 結果メール送信完了 → ${email}`);
+  const ok = await sendUserConfirmation({ to: email, subject: '【ArchiAI】AI詳細診断レポートをお届けします', text: body });
+  if (ok) console.log(`[BG] 結果メール送信完了 → ${email}`);
+  return ok;
 }
 
 // ─── AI詳細診断バックグラウンド実行（支払い確認後にサーバー側で自動実行） ──────
@@ -280,7 +281,17 @@ async function runDiagnosisAndEmail(diagnosisId, email) {
     entry.result = filterDiagnosisResult(JSON.parse(jsonMatch[0]), entry.floors || '', entry.familySize || '', entry.childrenCount || '');
     entry.running = false;
     console.log(`[BG] 診断完了 diagnosisId=${diagnosisId}`);
-    if (email) await sendDetailResultEmail(email, entry.result);
+    if (email) {
+      const sent = await sendDetailResultEmail(email, entry.result);
+      if (!sent) {
+        // 結果はキャッシュ済み（リトライ可能）だが、メール未達のため管理者に手動対応を促す
+        console.error(`[BG] ⚠️ 結果メール送信失敗 diagnosisId=${diagnosisId} email=${email}`);
+        await sendNotification({
+          subject: '【ArchiAI】⚠️ 結果メール送信失敗（要手動対応）',
+          text: `AI詳細診断は完了しましたが、結果メールの送信に失敗しました。\n\n診断ID: ${diagnosisId}\nメール: ${email}\n\nお客様へ手動で結果をお送りするか、状況をご連絡ください。`,
+        });
+      }
+    }
   } catch (err) {
     entry.running = false;
     entry.bgError = err.message;
@@ -297,13 +308,15 @@ async function runDiagnosisAndEmail(diagnosisId, email) {
 
 // ユーザー向け決済確認メール
 async function sendUserConfirmation({ to, subject, text }) {
-  if (!to) { console.log('[Email] ユーザー宛先なし → スキップ'); return; }
-  if (MOCK_EMAIL) { console.log(`[Email mock user] to=${to} subject="${subject}"`); return; }
+  if (!to) { console.log('[Email] ユーザー宛先なし → スキップ'); return false; }
+  if (MOCK_EMAIL) { console.log(`[Email mock user] to=${to} subject="${subject}"`); return true; }
   try {
     await sendMailWithTimeout({ from: EMAIL_USER, to, subject, text });
     console.log(`[Email] ユーザー向け送信完了: ${to}`);
+    return true;
   } catch (e) {
     console.error('[Email] ユーザー向け送信エラー:', e.message);
+    return false;
   }
 }
 
@@ -323,6 +336,16 @@ const FLOOR_FORBIDDEN_WORDS = {
 
 // 子どもなし判定で使う禁止ワード
 const NO_CHILDREN_FORBIDDEN_WORDS = ['子ども', '子供', '子育て', '育児', 'お子', 'キッズ', '子ども部屋', '子供部屋', '保育', '通学'];
+
+// 総評文（overall_comment / verdict）から、禁止ワードを含む文だけを除去する。
+// 配列項目と違い丸ごと消せないため、句点単位で矛盾文のみ落とし、全消失時はフォールバック文を返す。
+function scrubForbiddenSentences(text, forbidden, fallback) {
+  if (!text || typeof text !== 'string') return text;
+  if (!forbidden.some(w => text.includes(w))) return text;
+  const kept = text.split(/(?<=。)/).filter(s => !forbidden.some(w => s.includes(w)));
+  const joined = kept.join('').trim();
+  return joined.length > 0 ? joined : fallback;
+}
 
 function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
   if (!result) return result;
@@ -362,6 +385,12 @@ function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
     detailed_suggestions: filterObjArr(result.detailed_suggestions, ['area', 'action', 'reason']),
   };
 
+  // 総評文の矛盾文を除去（唯一フィルタが効いていなかった欄。クレーム文面になりやすいため）
+  filtered.overall_comment = scrubForbiddenSentences(result.overall_comment, forbidden,
+    '間取り図をもとに各観点から総合的に評価しました。詳細は各項目をご確認ください。');
+  filtered.verdict = scrubForbiddenSentences(result.verdict, forbidden,
+    '総合的に見て改善の余地がある間取りです。詳細は各項目をご確認ください。');
+
   // 除去件数をログ（デバッグ用）
   const removed =
     (before.issues       - (filtered.issues?.length || 0)) +
@@ -393,6 +422,32 @@ function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
   return filtered;
 }
 
+// ─── 無料診断の日次制限（サーバー側・IP単位） ────────────────────────────────
+// localStorage制限はincognitoで回避できるため、IP単位でサーバー側でも制限する。
+// ※IPは万能ではない（VPN・モバイル回線のIP変動・同一NAT共有は合算）が、カジュアルな回避は防げる。
+const FREE_DAILY_LIMIT = 2;
+const freeDailyUsage = new Map(); // ip -> { date: 'YYYY-MM-DD', count }
+const freeDailyKey = (req) => (req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '').trim();
+
+function freeDailyLimiter(req, res, next) {
+  if (MOCK_MODE) return next(); // 開発時は制限しない
+  const today = new Date().toISOString().slice(0, 10);
+  const rec = freeDailyUsage.get(freeDailyKey(req));
+  const count = (rec && rec.date === today) ? rec.count : 0;
+  if (count >= FREE_DAILY_LIMIT) {
+    return res.status(429).json({
+      error: `無料診断は1日${FREE_DAILY_LIMIT}件までご利用いただけます。日付が変わってから再度お試しください。より詳しい診断をご希望の場合はAI詳細診断もご利用いただけます。`,
+    });
+  }
+  next();
+}
+function recordFreeDailyUsage(req) {
+  const today = new Date().toISOString().slice(0, 10);
+  const ip = freeDailyKey(req);
+  const rec = freeDailyUsage.get(ip);
+  freeDailyUsage.set(ip, { date: today, count: (rec && rec.date === today ? rec.count : 0) + 1 });
+}
+
 if (MOCK_MODE) console.log('[モード] APIキー未設定 → モックデータで動作します');
 
 // ─── AI詳細診断ファイル一時保管（Stripe決済後に即時結果を返すため） ──────────
@@ -401,6 +456,11 @@ setInterval(() => {
   const cutoff = Date.now() - 2 * 60 * 60 * 1000; // 2時間でTTL
   for (const [id, entry] of tempDiagnosisStore) {
     if (entry.timestamp < cutoff) tempDiagnosisStore.delete(id);
+  }
+  // 無料診断の日次カウンタも、前日以前のエントリを掃除（メモリ肥大防止）
+  const today = new Date().toISOString().slice(0, 10);
+  for (const [ip, rec] of freeDailyUsage) {
+    if (rec.date !== today) freeDailyUsage.delete(ip);
   }
 }, 30 * 60 * 1000);
 
@@ -555,7 +615,7 @@ function buildFileContentBlocks(files) {
 }
 
 // ─── 診断エンドポイント ────────────────────────────────────────────────────────
-app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
+app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, freeDailyLimiter, upload.array('files', 10), async (req, res) => {
   try {
     const files = req.files || [];
     if (files.length === 0) {
@@ -622,6 +682,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, upload.array(
     // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
     const result = filterDiagnosisResult(rawResult, floors, basicInfoParsed.familySize || '', basicInfoParsed.childrenCount || '');
 
+    recordFreeDailyUsage(req); // 成功した診断のみカウント
     res.json(result);
   } catch (err) {
     console.error('診断エラー:', err);
@@ -776,7 +837,7 @@ app.post('/api/validate-coupon', express.json(), (req, res) => {
 // ─── Stripe 決済セッション作成 ────────────────────────────────────────────────
 app.post('/api/create-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
-    const { name, email, message, structure, floors, familySize, ageGroup, price, couponCode } = req.body;
+    const { name, email, message, structure, floors, familySize, childrenCount, ageGroup, price, couponCode } = req.body;
     if (!name || !email) {
       return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
     }
@@ -788,6 +849,11 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
       if (c) chargeAmount = Math.max(3000 - c.discount, 0);
     } else if (price) {
       chargeAmount = parseInt(price, 10) || 3000;
+    }
+
+    // Stripeの最低決済額（JPYは¥50）を下回る場合はエラー（クーポン全額割引などの破綻を防ぐ）
+    if (chargeAmount < 50) {
+      return res.status(400).json({ error: 'このクーポンは現在ご利用いただけません。お手数ですが運営までお問い合わせください。' });
     }
 
     const origin = process.env.NODE_ENV === 'production'
@@ -825,6 +891,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
         structure: structure || '',
         floors: floors || '',
         familySize: familySize || '',
+        childrenCount: childrenCount || '',
         ageGroup: ageGroup || '',
       },
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30分で期限切れ
@@ -891,7 +958,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
       mode: 'payment',
       customer_email: email,
       payment_intent_data: { receipt_email: email },
-      metadata: { plan: 'ai', name, email, structure: structure || '', floors: floors || '', diagnosisId },
+      metadata: { plan: 'ai', name, email, structure: structure || '', floors: floors || '', familySize: familySize || '', childrenCount: childrenCount || '', ageGroup: ageGroup || '', diagnosisId },
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30分で期限切れ
       success_url: `${origin}/?payment=ai-success${didParam}`,
       cancel_url:  `${origin}/?payment=cancel`,
@@ -952,7 +1019,7 @@ app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
     if (entry.result) return res.json(entry.result);
     if (entry.bgError) {
       return res.status(500).json({
-        error: '診断中にエラーが発生しました。結果はメールにてお送りします。ご不明点は ArchiAI@outlook.jp までご連絡ください。',
+        error: '診断処理中にエラーが発生しました。ご入力のメールアドレスにご案内をお送りしました。お手数ですが ArchiAI@outlook.jp まで（お名前・決済日時を添えて）ご連絡ください。返金または再診断で確実に対応いたします。',
         code: 'bg_error',
       });
     }

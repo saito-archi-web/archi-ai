@@ -61,10 +61,11 @@ function PasswordGate({ onAuth }) {
 const USAGE_KEY = 'archi_usage'
 const getToday  = () => new Date().toISOString().slice(0, 10)
 
+const FREE_DAILY_LIMIT = 2
 function checkDailyLimit() {
   try {
     const s = JSON.parse(localStorage.getItem(USAGE_KEY) || '{}')
-    return !(s.date === getToday() && (s.count || 0) >= 1)
+    return !(s.date === getToday() && (s.count || 0) >= FREE_DAILY_LIMIT)
   } catch { return true }
 }
 function recordUsage() {
@@ -122,6 +123,14 @@ const STRUCTURE_OPTIONS  = ['木造', '鉄骨造', '鉄筋コンクリート造'
 const FLOOR_OPTIONS      = ['平屋', '2階建て', '3階建て']
 const FAMILY_OPTIONS     = ['1人', '2人', '3人', '4人', '5人以上']
 const CHILDREN_OPTIONS   = ['0人', '1人', '2人', '3人以上']
+// 子どもの人数は「家族人数−1（最低1人は大人）」を上限とし、矛盾入力（例：1人家族で子ども3人）を防ぐ
+const CHILDREN_RANK = { '0人': 0, '1人': 1, '2人': 2, '3人以上': 3 }
+const FAMILY_CHILD_CAP = { '1人': 0, '2人': 1, '3人': 2, '4人': 3, '5人以上': 3 }
+function allowedChildrenOptions(familySize) {
+  const cap = FAMILY_CHILD_CAP[familySize]
+  if (cap === undefined) return CHILDREN_OPTIONS // 家族人数 未選択時は全て許可
+  return CHILDREN_OPTIONS.filter(o => CHILDREN_RANK[o] <= cap)
+}
 const AGE_OPTIONS        = ['20代', '30代', '40代', '50代', '60代以上']
 const BUDGET_OPTIONS    = ['〜2,000万', '2,000万〜3,000万', '3,000万〜4,000万', '5,000万〜6,000万', '6,000万〜8,000万', '8,000万以上']
 
@@ -580,7 +589,7 @@ export default function App() {
     }
     // 無料診断：1日1回制限チェック（モックモード時はスキップ）
     if (selectedPlan === 'free' && !mockMode && !testMode && !checkDailyLimit()) {
-      setError('本日の無料診断は上限に達しました。明日またお試しください。')
+      setError(`無料診断は1日${FREE_DAILY_LIMIT}件までご利用いただけます。日付が変わってから再度お試しください。`)
       return
     }
 
@@ -1306,6 +1315,15 @@ function LandingScreen({ onStart, onViewSaved }) {
 
 function BasicInfoScreen({ basicInfo, onChange, onNext, onBackId }) {
   const isComplete = basicInfo.structure && basicInfo.floors && basicInfo.familySize && basicInfo.childrenCount && basicInfo.ageGroup
+  const childrenOptions = allowedChildrenOptions(basicInfo.familySize)
+
+  // 家族人数を変更した結果、現在の子ども人数が上限を超えた場合は補正する
+  useEffect(() => {
+    if (basicInfo.childrenCount && !childrenOptions.includes(basicInfo.childrenCount)) {
+      onChange(prev => ({ ...prev, childrenCount: childrenOptions.length === 1 ? childrenOptions[0] : '' }))
+    }
+  }, [basicInfo.familySize]) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="screen">
       <div className="info-fields">
@@ -1313,7 +1331,7 @@ function BasicInfoScreen({ basicInfo, onChange, onNext, onBackId }) {
           { label: '構造方式',       options: STRUCTURE_OPTIONS, key: 'structure' },
           { label: '階数',           options: FLOOR_OPTIONS,     key: 'floors' },
           { label: '家族人数',       options: FAMILY_OPTIONS,    key: 'familySize' },
-          { label: '子どもの人数',   options: CHILDREN_OPTIONS,  key: 'childrenCount' },
+          { label: '子どもの人数',   options: childrenOptions,   key: 'childrenCount' },
           { label: '世帯主の年齢',   options: AGE_OPTIONS,       key: 'ageGroup' },
         ].map(({ label, options, key }) => (
           <div key={key} className="info-field">
@@ -1971,7 +1989,7 @@ function ConsultScreen({ onSubmit, onBackId, onBack, selectedPlan, basicInfo, pr
             onChange={e=>setForm({...form,emailConfirm:e.target.value})}
             onPaste={e=>e.preventDefault()}
           />
-          <p className="form-char-count" style={{ textAlign: 'left' }}>※ コピー&amp;ペーストは無効です</p>
+          <p className="form-char-count" style={{ textAlign: 'left' }}>※ 入力ミス防止のため、確認用は手入力をお願いします（結果をメールでお届けします）</p>
         </div>
         <div className="form-field">
           <label className="form-label" htmlFor="message">気になる点・ご要望 <span className="slot-optional">任意</span></label>
@@ -2077,7 +2095,7 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
             onChange={e=>setForm({...form,emailConfirm:e.target.value})}
             onPaste={e=>e.preventDefault()}
           />
-          <p className="form-char-count" style={{ textAlign: 'left' }}>※ コピー&amp;ペーストは無効です</p>
+          <p className="form-char-count" style={{ textAlign: 'left' }}>※ 入力ミス防止のため、確認用は手入力をお願いします（結果をメールでお届けします）</p>
         </div>
         {error && <div className="error-box">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading}>
