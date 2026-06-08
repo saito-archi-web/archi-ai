@@ -314,9 +314,10 @@ const client = MOCK_MODE ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_
 // 入力された前提条件と矛盾する診断項目をサーバー側で除去する
 
 // 階数ごとに「出てはいけないワード」を定義
+// 注意：'上の階'は2階建てでは2階を指す正当な表現のため、平屋（上階が存在しない）にのみ含める
 const FLOOR_FORBIDDEN_WORDS = {
   '平屋':    ['2階', '二階', '2F', '上階', '上の階', '上層', '2つ目の階', '階段'],
-  '2階建て': ['3階', '三階', '3F', '4階', '上の階'],
+  '2階建て': ['3階', '三階', '3F', '4階'],
   '3階建て': ['4階', '四階', '4F', '5階'],
 };
 
@@ -358,7 +359,7 @@ function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
     good_points:          filterArr(result.good_points),
     priority_issues:      filterObjArr(result.priority_issues,      ['title', 'detail', 'impact']),
     life_stress:          filterArr(result.life_stress),
-    detailed_suggestions: filterObjArr(result.detailed_suggestions, ['action', 'reason']),
+    detailed_suggestions: filterObjArr(result.detailed_suggestions, ['area', 'action', 'reason']),
   };
 
   // 除去件数をログ（デバッグ用）
@@ -371,6 +372,22 @@ function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
 
   if (removed > 0) {
     console.log(`[FactFilter] floors="${floors}" family="${familySize}" children="${childrenCount}" → ${removed}件の矛盾項目を除去`);
+  }
+
+  // 過剰除去ガード：主要な出力がすべて空になった場合はフィルタ前を返す（空レポート防止）
+  // 課金ユーザーが空のレポートを受け取る事故を防ぐ。矛盾が残るリスクより空レポートのほうが致命的なため。
+  const detailEmptied =
+    (before.priority > 0 || before.life_stress > 0 || before.suggestions2 > 0) &&
+    (filtered.priority_issues?.length      || 0) === 0 &&
+    (filtered.life_stress?.length          || 0) === 0 &&
+    (filtered.detailed_suggestions?.length || 0) === 0;
+  const freeEmptied =
+    (before.issues > 0 || before.suggestions > 0) &&
+    (filtered.issues?.length      || 0) === 0 &&
+    (filtered.suggestions?.length || 0) === 0;
+  if (detailEmptied || freeEmptied) {
+    console.warn(`[FactFilter] 過剰除去を検出（主要項目が全消失）→ フィルタを無効化し元の結果を返します floors="${floors}" family="${familySize}" children="${childrenCount}"`);
+    return result;
   }
 
   return filtered;

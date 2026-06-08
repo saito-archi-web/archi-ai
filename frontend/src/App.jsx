@@ -139,7 +139,7 @@ const PLANS = [
     features: ['5項目スコアリング（動線・採光・収納など）', '良い点・気になるポイントの指摘', '基本的な改善提案', '診断後にAI詳細診断・建築士相談に進める'],
   },
   {
-    id: 'ai', name: 'AI詳細診断', price: '¥300', tag: '人気', tagBg: '#FF6B35',
+    id: 'ai', name: 'AI詳細診断', price: '¥500', tag: '人気', tagBg: '#FF6B35',
     features: ['無料診断の全項目', '優先度付き問題点リスト（最大5件）', '「住んでから気づく」生活ストレス予測', 'コスト感付きの具体的改善策', 'ピンポイント質疑応答（1問）', '診断後に一級建築士相談に進める'],
   },
   {
@@ -1623,7 +1623,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
         <div className="premium-card">
           <div className="premium-card-top">
             <div><span className="premium-card-name">② AI詳細診断</span><p className="premium-card-sub">問題点の深掘り＋生活ストレス予測</p></div>
-            <span className="premium-card-price">¥300</span>
+            <span className="premium-card-price">¥500</span>
           </div>
           <ul className="premium-list">
             <li>優先順位付きの問題点リスト（最大5件）</li>
@@ -1631,7 +1631,7 @@ function ResultsScreen({ diagnosis, basicInfo, onReset, onDetailDiagnose, onCons
             <li>コスト感付きの具体的改善提案</li>
             <li>ピンポイント質疑応答（1問）</li>
           </ul>
-          <button className="btn-premium-orange" onClick={onDetailDiagnose}>AI詳細診断を見る（¥300）</button>
+          <button className="btn-premium-orange" onClick={onDetailDiagnose}>AI詳細診断を見る（¥500）</button>
         </div>
         <div className="premium-card" style={{ marginTop: 11 }}>
           <div className="premium-card-top">
@@ -2081,7 +2081,7 @@ function AiPayScreen({ onSubmit, onBackId, onBack, basicInfo, testMode }) {
         </div>
         {error && <div className="error-box">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading}>
-          {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥300）'}
+          {loading ? '決済ページへ移動中...' : 'お支払いへ進む（¥500）'}
         </button>
         <p className="form-char-count" style={{ textAlign: 'center', marginTop: 8 }}>Stripeの安全な決済画面に移動します</p>
         <p className="form-char-count" style={{ textAlign: 'center' }}>※ 決済完了後、Stripeより領収書メールが自動送信されます</p>
@@ -2107,7 +2107,7 @@ function TokushoModal({ onClose }) {
               <tr><th>電話番号</th><td>お問い合わせいただいた場合は遅滞なく開示いたします</td></tr>
               <tr><th>メールアドレス</th><td>ArchiAI@outlook.jp</td></tr>
               <tr><th>サービス名</th><td>ArchiAI 間取り診断</td></tr>
-              <tr><th>販売価格</th><td>AI詳細診断 ¥300／ 一級建築士相談 ¥3,000</td></tr>
+              <tr><th>販売価格</th><td>AI詳細診断 ¥500／ 一級建築士相談 ¥3,000</td></tr>
               <tr><th>支払方法</th><td>クレジットカード（Stripe決済）</td></tr>
               <tr><th>支払時期</th><td>お申し込み時にご精算いただきます</td></tr>
               <tr><th>サービス提供時期</th><td>AI診断：決済完了後、即時提供。建築士相談：3営業日以内にメールにてご連絡</td></tr>
