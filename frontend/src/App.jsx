@@ -1,22 +1,41 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
 
-// ─── テスト用パスワードゲート ──────────────────────────────────────────────────
-const TEST_PASSWORD = 'moyasi'
-const TEST_AUTH_KEY = 'archi_test_auth'
+// ─── テスト用パスワードゲート（サーバー側認証） ──────────────────────────────────
+// パスワードはサーバーで照合し、HMAC署名トークンを受け取って保持する。
+// 平文パスワードはフロントに保持しない（バンドル露出を防ぐ）。
+const SITE_TOKEN_KEY = 'archi_site_token'
+function getSiteToken() { try { return sessionStorage.getItem(SITE_TOKEN_KEY) || '' } catch { return '' } }
+function clearSiteToken() { try { sessionStorage.removeItem(SITE_TOKEN_KEY) } catch {} }
 
 function PasswordGate({ onAuth }) {
   const [input, setInput] = useState('')
   const [error, setError] = useState(false)
+  const [loading, setLoading] = useState(false)
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    if (input === TEST_PASSWORD) {
-      try { sessionStorage.setItem(TEST_AUTH_KEY, '1') } catch {}
-      onAuth()
-    } else {
+    if (loading) return
+    setLoading(true)
+    setError(false)
+    try {
+      const res = await fetch('/api/site-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: input }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.token) {
+        try { sessionStorage.setItem(SITE_TOKEN_KEY, data.token) } catch {}
+        onAuth()
+      } else {
+        setError(true)
+        setInput('')
+      }
+    } catch {
       setError(true)
-      setInput('')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -44,12 +63,13 @@ function PasswordGate({ onAuth }) {
             }}
           />
           {error && <p style={{ color: '#C42230', fontSize: 13, marginBottom: 8 }}>パスワードが違います</p>}
-          <button type="submit" style={{
+          <button type="submit" disabled={loading} style={{
             width: '100%', padding: '12px', fontSize: 15, fontWeight: 700,
             background: '#C42230', color: '#fff', border: 'none',
-            borderRadius: 8, cursor: 'pointer', marginTop: 4,
+            borderRadius: 8, cursor: loading ? 'default' : 'pointer', marginTop: 4,
+            opacity: loading ? 0.6 : 1,
           }}>
-            入る
+            {loading ? '確認中...' : '入る'}
           </button>
         </form>
       </div>
@@ -449,10 +469,8 @@ export default function App() {
   const [paymentDone, setPaymentDone]         = useState(null) // 'architect' | 'ai' | null
   // APIキー未設定時のモックモード（利用回数制限なし）
   const [mockMode, setMockMode]               = useState(false)
-  // テスト用パスワード認証
-  const [authenticated, setAuthenticated]     = useState(() => {
-    try { return sessionStorage.getItem(TEST_AUTH_KEY) === '1' } catch { return false }
-  })
+  // テスト用パスワード認証（サーバー発行トークンの有無で判定）
+  const [authenticated, setAuthenticated]     = useState(() => !!getSiteToken())
   // テストモード = 認証済み（支払い・制限なし）
   const testMode = authenticated
   // 診断結果別画面
@@ -607,7 +625,7 @@ export default function App() {
       const token = await getRecaptchaToken(recaptchaSiteKey, 'diagnose')
       const fd = buildFormData()
       if (token) fd.append('recaptchaToken', token)
-      const res = await fetch(isDetail ? '/api/diagnose/detail' : '/api/diagnose', { method: 'POST', body: fd })
+      const res = await fetch(isDetail ? '/api/diagnose/detail' : '/api/diagnose', { method: 'POST', body: fd, headers: { 'x-site-auth': getSiteToken() } })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
       if (selectedPlan === 'free' && !mockMode && !testMode) recordUsage()
@@ -676,8 +694,13 @@ export default function App() {
           if (form.question?.trim()) fd.append('question', form.question.trim())
           const token = await getRecaptchaToken(recaptchaSiteKey, 'diagnose')
           if (token) fd.append('recaptchaToken', token)
-          const res = await fetch('/api/diagnose/detail', { method: 'POST', body: fd })
-          const data = await res.json()
+          const res = await fetch('/api/diagnose/detail', { method: 'POST', body: fd, headers: { 'x-site-auth': getSiteToken() } })
+          const data = await res.json().catch(() => ({}))
+          if (res.status === 403) {
+            clearSiteToken()
+            setAuthenticated(false)
+            throw new Error('認証の有効期限が切れました。パスワードを再入力してください。')
+          }
           if (!res.ok) throw new Error(data.error || `エラー (${res.status})`)
           setLoadingPct(100)
           await new Promise(r => setTimeout(r, 600))

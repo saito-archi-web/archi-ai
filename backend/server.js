@@ -10,11 +10,16 @@ require('dotenv').config();
 
 // ─── レートリミット ────────────────────────────────────────────────────────────
 const rateLimit = require('express-rate-limit');
+// IPv6を正しく正規化するためのヘルパー（express-rate-limit v7+のipKeyGenerator）。
+// 古いバージョンや未提供の場合は素通しにフォールバック。
+const ipKeyGenerator = rateLimit.ipKeyGenerator || ((ip) => ip);
+// X-Forwarded-For（プロキシ経由の実IP）を優先しつつ、IPv6を正規化したレート制限キー
+const rlKey = (req) => ipKeyGenerator((req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.ip || '');
 
 const diagnoseLimiterMin = rateLimit({
   windowMs: 60 * 1000,          // 1分
   max: 3,                        // 同一IPから3回まで
-  keyGenerator: (req) => req.headers['x-forwarded-for']?.split(',')[0] || req.ip,
+  keyGenerator: rlKey,
   handler: (req, res) => res.status(429).json({ error: 'しばらく時間をおいて再度お試しください。' }),
   standardHeaders: true,
   legacyHeaders: false,
@@ -23,7 +28,7 @@ const diagnoseLimiterMin = rateLimit({
 const diagnoseLimiterHour = rateLimit({
   windowMs: 60 * 60 * 1000,     // 1時間
   max: 10,                       // 同一IPから10回まで
-  keyGenerator: (req) => req.headers['x-forwarded-for']?.split(',')[0] || req.ip,
+  keyGenerator: rlKey,
   handler: (req, res) => res.status(429).json({ error: '本日の利用上限に達しました。しばらく時間をおいて再度お試しください。' }),
   standardHeaders: true,
   legacyHeaders: false,
@@ -322,6 +327,51 @@ async function sendUserConfirmation({ to, subject, text }) {
 
 const MOCK_MODE = !process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'your_anthropic_api_key_here';
 const client = MOCK_MODE ? null : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// ─── サイト認証（テスト/プレビュー用・サーバー側トークン） ──────────────────────
+// フロントのパスワードゲートはJSバンドルに露出するため認証として機能しない。
+// 高コストな未認証エンドポイント（/api/diagnose/detail = Sonnet）を守るため、
+// サーバー側でパスワードを照合し、HMAC署名付きトークンを発行・検証する。
+const SITE_PASSWORD = process.env.SITE_PASSWORD || 'moyasi'; // ★本番は必ず環境変数で上書きすること
+if (!process.env.SITE_PASSWORD) console.warn('[Auth] SITE_PASSWORD 未設定 → 既定値で動作中。本番では必ず環境変数を設定してください');
+// 署名鍵：未設定ならパスワードから決定的に導出（再起動をまたいでトークンが有効なまま）
+const AUTH_SECRET = process.env.AUTH_SECRET
+  || crypto.createHash('sha256').update('archi-site-auth:' + SITE_PASSWORD).digest('hex');
+const SITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7日
+
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+function signSiteToken(ttlMs = SITE_TOKEN_TTL_MS) {
+  const exp = Date.now() + ttlMs;
+  const sig = crypto.createHmac('sha256', AUTH_SECRET).update(String(exp)).digest('hex');
+  return `${exp}.${sig}`;
+}
+function verifySiteToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  const dot = token.indexOf('.');
+  if (dot < 0) return false;
+  const expStr = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const exp = parseInt(expStr, 10);
+  if (!Number.isFinite(exp) || exp < Date.now()) return false;
+  const expected = crypto.createHmac('sha256', AUTH_SECRET).update(String(exp)).digest('hex');
+  return safeEqual(sig, expected);
+}
+// 保護対象エンドポイント用ミドルウェア（MOCK時は開発利便のためスキップ）
+function requireSiteAuth(req, res, next) {
+  if (MOCK_MODE) return next();
+  const token = req.headers['x-site-auth']
+    || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (verifySiteToken(token)) return next();
+  return res.status(403).json({
+    error: 'この操作には認証が必要です。ページを再読み込みし、パスワードを入力してからお試しください。',
+    code: 'auth_required',
+  });
+}
 
 // ─── ファクトチェックフィルター（0追加トークン・ルールベース） ───────────────────
 // 入力された前提条件と矛盾する診断項目をサーバー側で除去する
@@ -767,7 +817,7 @@ ${questionSection}
 }
 
 // ─── AI詳細診断エンドポイント ──────────────────────────────────────────────────
-app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, dailyLimiter('detail'), upload.array('files', 10), async (req, res) => {
+app.post('/api/diagnose/detail', requireSiteAuth, diagnoseLimiterMin, diagnoseLimiterHour, dailyLimiter('detail'), upload.array('files', 10), async (req, res) => {
   try {
     const files = req.files || [];
     if (files.length === 0) {
@@ -1157,6 +1207,24 @@ app.post('/api/send-result', express.json(), async (req, res) => {
     console.error('結果メール送信エラー:', err);
     res.status(500).json({ error: '送信中にエラーが発生しました' });
   }
+});
+
+// ─── サイト認証（パスワード→トークン発行） ───────────────────────────────────
+// ブルートフォース対策：同一IPから1分10回まで
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: rlKey,
+  handler: (req, res) => res.status(429).json({ error: 'しばらく時間をおいて再度お試しください。' }),
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/api/site-auth', authLimiter, (req, res) => {
+  const password = req.body?.password || '';
+  if (!safeEqual(password, SITE_PASSWORD)) {
+    return res.status(401).json({ ok: false, error: 'パスワードが違います' });
+  }
+  res.json({ ok: true, token: signSiteToken() });
 });
 
 // ─── ヘルスチェック ───────────────────────────────────────────────────────────
