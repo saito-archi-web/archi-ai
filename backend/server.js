@@ -422,31 +422,49 @@ function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
   return filtered;
 }
 
-// ─── 無料診断の日次制限（サーバー側・IP単位） ────────────────────────────────
+// ─── 診断の日次制限（サーバー側・IP単位） ────────────────────────────────────
 // localStorage制限はincognitoで回避できるため、IP単位でサーバー側でも制限する。
-// ※IPは万能ではない（VPN・モバイル回線のIP変動・同一NAT共有は合算）が、カジュアルな回避は防げる。
-const FREE_DAILY_LIMIT = 2;
-const freeDailyUsage = new Map(); // ip -> { date: 'YYYY-MM-DD', count }
-const freeDailyKey = (req) => (req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '').trim();
+// 2種類の上限を持つ：
+//   - success: 提供する「成功した診断」数（商品としての無料枠）。我々起因の失敗で枠を消費させない。
+//   - attempts: AI APIを呼んだ回数（失敗含む）。コスト上限。失敗を繰り返してAPIを浪費する濫用を遮断する。
+// ※IPは万能ではない（VPN・モバイル回線のIP変動・同一NAT共有は合算）が、カジュアルな濫用は防げる。
+const DAILY_LIMITS = {
+  free:   { attempts: parseInt(process.env.FREE_DAILY_ATTEMPTS   || '6',  10), success: parseInt(process.env.FREE_DAILY_SUCCESS || '2', 10) },
+  // detailは本番の有料フローでは未使用（決済フローは detail-by-id を使う）。未認証でSonnetを呼べるため濫用抑制が目的。
+  detail: { attempts: parseInt(process.env.DETAIL_DAILY_ATTEMPTS || '10', 10), success: parseInt(process.env.DETAIL_DAILY_ATTEMPTS || '10', 10) },
+};
+const dailyUsage = new Map(); // `${bucket}:${ip}` -> { date, success, attempts }
+const dailyIpOf = (req) => (req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '').trim();
 
-function freeDailyLimiter(req, res, next) {
-  if (MOCK_MODE) return next(); // 開発時は制限しない
+function getDailyRec(bucket, req) {
   const today = new Date().toISOString().slice(0, 10);
-  const rec = freeDailyUsage.get(freeDailyKey(req));
-  const count = (rec && rec.date === today) ? rec.count : 0;
-  if (count >= FREE_DAILY_LIMIT) {
-    return res.status(429).json({
-      error: `無料診断は1日${FREE_DAILY_LIMIT}件までご利用いただけます。日付が変わってから再度お試しください。より詳しい診断をご希望の場合はAI詳細診断もご利用いただけます。`,
-    });
-  }
-  next();
+  const key = `${bucket}:${dailyIpOf(req)}`;
+  let rec = dailyUsage.get(key);
+  if (!rec || rec.date !== today) { rec = { date: today, success: 0, attempts: 0 }; dailyUsage.set(key, rec); }
+  return rec;
 }
-function recordFreeDailyUsage(req) {
-  const today = new Date().toISOString().slice(0, 10);
-  const ip = freeDailyKey(req);
-  const rec = freeDailyUsage.get(ip);
-  freeDailyUsage.set(ip, { date: today, count: (rec && rec.date === today ? rec.count : 0) + 1 });
+function dailyLimiter(bucket) {
+  return (req, res, next) => {
+    if (MOCK_MODE) return next(); // 開発時は制限しない
+    const lim = DAILY_LIMITS[bucket];
+    const rec = getDailyRec(bucket, req);
+    if (rec.attempts >= lim.attempts) {
+      return res.status(429).json({ error: '本日のご利用回数の上限に達しました。日付が変わってから再度お試しください。' });
+    }
+    if (rec.success >= lim.success) {
+      return res.status(429).json({
+        error: bucket === 'free'
+          ? `無料診断は1日${lim.success}件までご利用いただけます。日付が変わってから再度お試しください。より詳しい診断をご希望の場合はAI詳細診断もご利用いただけます。`
+          : '本日のご利用上限に達しました。日付が変わってから再度お試しください。',
+      });
+    }
+    next();
+  };
 }
+// AI APIを呼ぶ直前に呼び出す（失敗してもコストは発生するためカウントする）
+function recordDailyAttempt(bucket, req) { getDailyRec(bucket, req).attempts++; }
+// 診断が成功して結果を返す直前に呼び出す
+function recordDailySuccess(bucket, req) { getDailyRec(bucket, req).success++; }
 
 if (MOCK_MODE) console.log('[モード] APIキー未設定 → モックデータで動作します');
 
@@ -457,10 +475,10 @@ setInterval(() => {
   for (const [id, entry] of tempDiagnosisStore) {
     if (entry.timestamp < cutoff) tempDiagnosisStore.delete(id);
   }
-  // 無料診断の日次カウンタも、前日以前のエントリを掃除（メモリ肥大防止）
+  // 診断の日次カウンタも、前日以前のエントリを掃除（メモリ肥大防止）
   const today = new Date().toISOString().slice(0, 10);
-  for (const [ip, rec] of freeDailyUsage) {
-    if (rec.date !== today) freeDailyUsage.delete(ip);
+  for (const [key, rec] of dailyUsage) {
+    if (rec.date !== today) dailyUsage.delete(key);
   }
 }, 30 * 60 * 1000);
 
@@ -615,7 +633,7 @@ function buildFileContentBlocks(files) {
 }
 
 // ─── 診断エンドポイント ────────────────────────────────────────────────────────
-app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, freeDailyLimiter, upload.array('files', 10), async (req, res) => {
+app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, dailyLimiter('free'), upload.array('files', 10), async (req, res) => {
   try {
     const files = req.files || [];
     if (files.length === 0) {
@@ -638,6 +656,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, freeDailyLimi
     try { basicInfoParsed = JSON.parse(req.body.basicInfo || '{}'); } catch {}
     const floors = basicInfoParsed.floors || '';
 
+    recordDailyAttempt('free', req); // AI呼び出し直前にカウント（失敗してもコスト発生のため）
     const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',  // 無料診断：低コスト
       max_tokens: 1500,
@@ -682,7 +701,7 @@ app.post('/api/diagnose', diagnoseLimiterMin, diagnoseLimiterHour, freeDailyLimi
     // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
     const result = filterDiagnosisResult(rawResult, floors, basicInfoParsed.familySize || '', basicInfoParsed.childrenCount || '');
 
-    recordFreeDailyUsage(req); // 成功した診断のみカウント
+    recordDailySuccess('free', req); // 成功した診断のみ成功枠を消費
     res.json(result);
   } catch (err) {
     console.error('診断エラー:', err);
@@ -748,7 +767,7 @@ ${questionSection}
 }
 
 // ─── AI詳細診断エンドポイント ──────────────────────────────────────────────────
-app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
+app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, dailyLimiter('detail'), upload.array('files', 10), async (req, res) => {
   try {
     const files = req.files || [];
     if (files.length === 0) {
@@ -777,6 +796,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
     const floors = detailInfo.floors || '';
     const prompt = buildDetailPrompt(question, detailInfo);
 
+    recordDailyAttempt('detail', req); // Sonnet呼び出し直前にカウント（失敗してもコスト発生のため）
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',  // AI詳細診断：高品質
       max_tokens: 4000,
@@ -809,6 +829,7 @@ app.post('/api/diagnose/detail', diagnoseLimiterMin, diagnoseLimiterHour, upload
     // ファクトチェックフィルター（前提条件と矛盾する項目を除去）
     result = filterDiagnosisResult(result, floors, detailInfo.familySize || '', detailInfo.childrenCount || '');
 
+    recordDailySuccess('detail', req);
     res.json(result);
   } catch (err) {
     console.error('詳細診断エラー:', err);
