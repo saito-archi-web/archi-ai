@@ -89,6 +89,14 @@ app.use(cors(ALLOWED_ORIGIN && process.env.NODE_ENV === 'production'
   : {}
 ));
 
+// Stripeリダイレクト等の公開オリジンを決定する。
+// 本番でALLOWED_ORIGINが設定されていればそれを優先（Hostヘッダ偽装によるオープンリダイレクト防止）。
+function getOrigin(req) {
+  if (process.env.NODE_ENV === 'production' && ALLOWED_ORIGIN) return ALLOWED_ORIGIN;
+  const proto = process.env.NODE_ENV === 'production' ? 'https' : 'http';
+  return `${proto}://${req.get('host')}`;
+}
+
 // ─── 支払い済みフラグ永続化 ──────────────────────────────────────────────────
 const PAID_FLAGS_FILE = path.join(__dirname, 'tmp_paid_flags.json');
 let paidFlags = {};
@@ -188,9 +196,10 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
 
     // 建築士相談の決済完了を管理者へ通知（間取りファイルは申込時に別途送付済み）
     if (planKind === 'architect') {
+      const refNo = session.metadata?.refNo || '（番号なし）';
       await sendNotification({
-        subject: `【ArchiAI】✅一級建築士相談 決済完了`,
-        text: `一級建築士相談の決済が完了しました。\n\nお名前: ${session.metadata?.name || ''}\nメール: ${email}\n金額: ¥${(session.amount_total ?? '').toLocaleString?.() || session.amount_total || ''}\n\n※間取りファイルと相談内容は「申込（決済確認中）」メールに添付済みです。3営業日以内にご対応ください。`,
+        subject: `【ArchiAI】✅一級建築士相談 決済完了 ${refNo}`,
+        text: `一級建築士相談の決済が完了しました。\n\n受付番号: ${refNo}\nお名前: ${session.metadata?.name || ''}\nメール: ${email}\n金額: ¥${(session.amount_total ?? '').toLocaleString?.() || session.amount_total || ''}\n\n※間取りファイルと相談内容は同じ受付番号の「申込（決済確認中）」メールに添付済みです。3営業日以内にご対応ください。`,
       });
     }
 
@@ -941,7 +950,7 @@ app.post('/api/validate-coupon', express.json(), (req, res) => {
 });
 
 // ─── Stripe 決済セッション作成 ────────────────────────────────────────────────
-app.post('/api/create-checkout-session', upload.array('files', 10), async (req, res) => {
+app.post('/api/create-checkout-session', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
   try {
     const { name, email, message, structure, floors, familySize, childrenCount, ageGroup, couponCode } = req.body;
     if (!name || !email) {
@@ -960,9 +969,10 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
       return res.status(400).json({ error: 'このクーポンは現在ご利用いただけません。お手数ですが運営までお問い合わせください。' });
     }
 
-    const origin = process.env.NODE_ENV === 'production'
-      ? `https://${req.get('host')}`
-      : `http://${req.get('host')}`;
+    const origin = getOrigin(req);
+
+    // 受付番号（申込メールと決済完了通知を突き合わせるためのキー）
+    const refNo = `AR-${Date.now().toString(36).toUpperCase()}`;
 
     // 間取りファイル＋申込内容を管理者へ送付（決済確認はWebhookで別途通知）。
     // ※Stripe決済画面でファイルは扱えないため、申込時点で運営に確実に届けることで
@@ -970,8 +980,8 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
     const files = req.files || [];
     const attachments = files.map(f => ({ filename: f.originalname || `floorplan_${Date.now()}`, content: f.buffer }));
     await sendNotification({
-      subject: `【ArchiAI】一級建築士相談 申込（決済確認中）`,
-      text: `一級建築士相談の申し込みがありました（決済確認待ち）。\n\nお名前: ${name}\nメール: ${email}\n構造: ${structure || '（なし）'}\n階数: ${floors || '（なし）'}\n家族人数: ${familySize || '（なし）'}\n子ども: ${childrenCount || '（なし）'}\n世帯主年齢: ${ageGroup || '（なし）'}\nファイル数: ${files.length}\nクーポン: ${couponCode || '（なし）'}\n\n--- ご相談内容 ---\n${message || '（なし）'}\n\n※この後Stripeで決済が完了すると「決済完了」通知が届きます。`,
+      subject: `【ArchiAI】一級建築士相談 申込（決済確認中）${refNo}`,
+      text: `一級建築士相談の申し込みがありました（決済確認待ち）。\n\n受付番号: ${refNo}\nお名前: ${name}\nメール: ${email}\n構造: ${structure || '（なし）'}\n階数: ${floors || '（なし）'}\n家族人数: ${familySize || '（なし）'}\n子ども: ${childrenCount || '（なし）'}\n世帯主年齢: ${ageGroup || '（なし）'}\nファイル数: ${files.length}\nクーポン: ${couponCode || '（なし）'}\n\n--- ご相談内容 ---\n${message || '（なし）'}\n\n※この後Stripeで決済が完了すると「決済完了（${refNo}）」通知が届きます。`,
       attachments,
     });
 
@@ -1000,6 +1010,7 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
       payment_intent_data: { receipt_email: email },
       metadata: {
         plan: 'architect',
+        refNo,
         name,
         email,
         message: (message || '').substring(0, 500),
@@ -1021,9 +1032,9 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
   }
 });
 
-// ─── AI詳細診断 決済セッション作成（¥300） ──────────────────────────────────────
+// ─── AI詳細診断 決済セッション作成（¥500） ──────────────────────────────────────
 // ファイルも受け取り、一時保存してIDを発行。決済後に即時診断できるようにする。
-app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (req, res) => {
+app.post('/api/create-ai-checkout-session', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
   try {
     const { name, email, structure, floors, familySize, ageGroup, childrenCount } = req.body;
     if (!name || !email) {
@@ -1039,7 +1050,7 @@ app.post('/api/create-ai-checkout-session', upload.array('files', 10), async (re
     const files = req.files || [];
     const question = req.body?.question || '';
     if (files.length > 0) {
-      tempDiagnosisStore.set(diagnosisId, { files, question, floors: floors || '', familySize: familySize || '', ageGroup: ageGroup || '', childrenCount: childrenCount || '', result: null, timestamp: Date.now() });
+      tempDiagnosisStore.set(diagnosisId, { files, question, email: email || '', floors: floors || '', familySize: familySize || '', ageGroup: ageGroup || '', childrenCount: childrenCount || '', result: null, timestamp: Date.now() });
     }
     const didParam = files.length > 0 ? `&did=${diagnosisId}` : '';
 
@@ -1119,7 +1130,8 @@ app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
   // バックグラウンドジョブがまだ開始されていない場合のフォールバック
   // （Webhook到着前に detail-by-id が呼ばれた場合 / Webhook未設定環境）
   if (!entry.running && !entry.result && !entry.bgError) {
-    const fallbackEmail = paidFlags[req.params.id]?.email || '';
+    // メール宛先は entry.email（申込時保存）を優先。Webhook未到着だと paidFlags が無いため。
+    const fallbackEmail = entry.email || paidFlags[req.params.id]?.email || '';
     runDiagnosisAndEmail(req.params.id, fallbackEmail).catch(e =>
       console.error('[detail-by-id] フォールバック診断エラー:', e.message)
     );
