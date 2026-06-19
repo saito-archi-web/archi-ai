@@ -13,8 +13,9 @@ const rateLimit = require('express-rate-limit');
 // IPv6を正しく正規化するためのヘルパー（express-rate-limit v7+のipKeyGenerator）。
 // 古いバージョンや未提供の場合は素通しにフォールバック。
 const ipKeyGenerator = rateLimit.ipKeyGenerator || ((ip) => ip);
-// X-Forwarded-For（プロキシ経由の実IP）を優先しつつ、IPv6を正規化したレート制限キー
-const rlKey = (req) => ipKeyGenerator((req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.ip || '');
+// trust proxy 設定済みのため req.ip が信頼できる実クライアントIP。IPv6を正規化してキー化。
+// （生の X-Forwarded-For を使うとクライアントが偽装でき、レート制限を回避されるため使わない）
+const rlKey = (req) => ipKeyGenerator(req.ip || '');
 
 const diagnoseLimiterMin = rateLimit({
   windowMs: 60 * 1000,          // 1分
@@ -63,6 +64,9 @@ const stripe = MOCK_STRIPE ? null : require('stripe')(STRIPE_SECRET_KEY);
 if (MOCK_STRIPE) console.log('[Stripe] キー未設定 → モックモードで動作');
 
 const app = express();
+// Renderは単一のリバースプロキシ経由。trust proxyを設定しないと req.ip が常にプロキシのIPになり、
+// かつ X-Forwarded-For を生で参照するとクライアントが偽装できる。1ホップだけ信頼して実IPを得る。
+app.set('trust proxy', 1);
 
 // ファイルはメモリ上に保持（ディスク不要）
 const upload = multer({
@@ -125,6 +129,8 @@ async function savePaidFlags() {
 
 // ─── Stripe Webhook（express.json()より前に登録必須） ─────────────────────────
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || null;
+// 冪等性：処理済みイベントIDを記憶し、Stripeの再送による二重処理（メール重複等）を防ぐ
+const processedWebhookEvents = new Set();
 
 app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   // モック時はそのまま受け取る
@@ -140,6 +146,18 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
   } catch (err) {
     console.error('[Webhook] 署名検証失敗:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // 冪等性チェック：同一イベントの再送は二重処理しない
+  if (processedWebhookEvents.has(event.id)) {
+    console.log(`[Webhook] 重複イベントをスキップ id=${event.id}`);
+    return res.json({ received: true, duplicate: true });
+  }
+  processedWebhookEvents.add(event.id);
+  // メモリ肥大防止：1000件を超えたら古い順に間引く
+  if (processedWebhookEvents.size > 1000) {
+    const first = processedWebhookEvents.values().next().value;
+    processedWebhookEvents.delete(first);
   }
 
   if (event.type === 'checkout.session.completed') {
@@ -166,6 +184,14 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
           console.error('[Webhook] バックグラウンド診断の起動エラー:', e.message)
         );
       }
+    }
+
+    // 建築士相談の決済完了を管理者へ通知（間取りファイルは申込時に別途送付済み）
+    if (planKind === 'architect') {
+      await sendNotification({
+        subject: `【ArchiAI】✅一級建築士相談 決済完了`,
+        text: `一級建築士相談の決済が完了しました。\n\nお名前: ${session.metadata?.name || ''}\nメール: ${email}\n金額: ¥${(session.amount_total ?? '').toLocaleString?.() || session.amount_total || ''}\n\n※間取りファイルと相談内容は「申込（決済確認中）」メールに添付済みです。3営業日以内にご対応ください。`,
+      });
     }
 
     // ユーザー向け決済確認メール送信
@@ -481,10 +507,11 @@ function filterDiagnosisResult(result, floors, familySize, childrenCount = '') {
 const DAILY_LIMITS = {
   free:   { attempts: parseInt(process.env.FREE_DAILY_ATTEMPTS   || '6',  10), success: parseInt(process.env.FREE_DAILY_SUCCESS || '2', 10) },
   // detailは本番の有料フローでは未使用（決済フローは detail-by-id を使う）。未認証でSonnetを呼べるため濫用抑制が目的。
-  detail: { attempts: parseInt(process.env.DETAIL_DAILY_ATTEMPTS || '10', 10), success: parseInt(process.env.DETAIL_DAILY_ATTEMPTS || '10', 10) },
+  detail: { attempts: parseInt(process.env.DETAIL_DAILY_ATTEMPTS || '10', 10), success: parseInt(process.env.DETAIL_DAILY_SUCCESS || '10', 10) },
 };
 const dailyUsage = new Map(); // `${bucket}:${ip}` -> { date, success, attempts }
-const dailyIpOf = (req) => (req.headers['x-forwarded-for']?.split(',')[0] || req.ip || '').trim();
+// trust proxy 設定済みのため req.ip が信頼できる実IP（生ヘッダ参照は偽装可能なので使わない）
+const dailyIpOf = (req) => (req.ip || '').trim();
 
 function getDailyRec(bucket, req) {
   const today = new Date().toISOString().slice(0, 10);
@@ -530,6 +557,14 @@ setInterval(() => {
   for (const [key, rec] of dailyUsage) {
     if (rec.date !== today) dailyUsage.delete(key);
   }
+  // paidFlags の無制限増加を防ぐ（30日より古い決済フラグを削除）。
+  // 決済直後の参照（データ消失検知）に使うだけなので長期保持は不要。
+  const paidCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  let prunedPaid = false;
+  for (const [id, rec] of Object.entries(paidFlags)) {
+    if ((rec?.timestamp || 0) < paidCutoff) { delete paidFlags[id]; prunedPaid = true; }
+  }
+  if (prunedPaid) savePaidFlags();
 }, 30 * 60 * 1000);
 
 const MOCK_DIAGNOSIS = {
@@ -908,18 +943,16 @@ app.post('/api/validate-coupon', express.json(), (req, res) => {
 // ─── Stripe 決済セッション作成 ────────────────────────────────────────────────
 app.post('/api/create-checkout-session', upload.array('files', 10), async (req, res) => {
   try {
-    const { name, email, message, structure, floors, familySize, childrenCount, ageGroup, price, couponCode } = req.body;
+    const { name, email, message, structure, floors, familySize, childrenCount, ageGroup, couponCode } = req.body;
     if (!name || !email) {
       return res.status(400).json({ error: 'お名前とメールアドレスを入力してください' });
     }
 
-    // クーポン適用
+    // 金額はサーバー側でのみ決定（クライアントの price は信頼しない＝改ざんで¥50決済等を防ぐ）
     let chargeAmount = 3000;
     if (couponCode) {
       const c = COUPONS[(couponCode).toUpperCase().trim()];
       if (c) chargeAmount = Math.max(3000 - c.discount, 0);
-    } else if (price) {
-      chargeAmount = parseInt(price, 10) || 3000;
     }
 
     // Stripeの最低決済額（JPYは¥50）を下回る場合はエラー（クーポン全額割引などの破綻を防ぐ）
@@ -930,6 +963,17 @@ app.post('/api/create-checkout-session', upload.array('files', 10), async (req, 
     const origin = process.env.NODE_ENV === 'production'
       ? `https://${req.get('host')}`
       : `http://${req.get('host')}`;
+
+    // 間取りファイル＋申込内容を管理者へ送付（決済確認はWebhookで別途通知）。
+    // ※Stripe決済画面でファイルは扱えないため、申込時点で運営に確実に届けることで
+    //   「決済後に間取り図が運営に届かない」事故を防ぐ。
+    const files = req.files || [];
+    const attachments = files.map(f => ({ filename: f.originalname || `floorplan_${Date.now()}`, content: f.buffer }));
+    await sendNotification({
+      subject: `【ArchiAI】一級建築士相談 申込（決済確認中）`,
+      text: `一級建築士相談の申し込みがありました（決済確認待ち）。\n\nお名前: ${name}\nメール: ${email}\n構造: ${structure || '（なし）'}\n階数: ${floors || '（なし）'}\n家族人数: ${familySize || '（なし）'}\n子ども: ${childrenCount || '（なし）'}\n世帯主年齢: ${ageGroup || '（なし）'}\nファイル数: ${files.length}\nクーポン: ${couponCode || '（なし）'}\n\n--- ご相談内容 ---\n${message || '（なし）'}\n\n※この後Stripeで決済が完了すると「決済完了」通知が届きます。`,
+      attachments,
+    });
 
     if (MOCK_STRIPE) {
       // テスト用：そのまま成功ページへ
@@ -1104,7 +1148,7 @@ app.get('/api/diagnose/detail-by-id/:id', async (req, res) => {
 });
 
 // ─── 建築士相談エンドポイント ──────────────────────────────────────────────────
-app.post('/api/consult', upload.array('files', 10), async (req, res) => {
+app.post('/api/consult', diagnoseLimiterMin, diagnoseLimiterHour, upload.array('files', 10), async (req, res) => {
   try {
     const { name, email, message } = req.body;
     if (!name || !email) {
@@ -1143,7 +1187,7 @@ app.post('/api/consult', upload.array('files', 10), async (req, res) => {
 });
 
 // ─── 診断結果メール送信 ────────────────────────────────────────────────────────
-app.post('/api/send-result', express.json(), async (req, res) => {
+app.post('/api/send-result', diagnoseLimiterMin, diagnoseLimiterHour, express.json(), async (req, res) => {
   try {
     const { email, type, result } = req.body;
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

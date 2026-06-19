@@ -719,8 +719,8 @@ export default function App() {
 
     // 本番Stripeモード：ファイルも送りIDを取得、決済後に即時診断
     const fd = buildFormData()
-    fd.append('name',          form.name)
-    fd.append('email',         form.email)
+    fd.append('name',          (form.name || '').trim())
+    fd.append('email',         (form.email || '').trim())
     fd.append('structure',     basicInfo.structure     || '')
     fd.append('floors',        basicInfo.floors        || '')
     fd.append('familySize',    basicInfo.familySize    || '')
@@ -728,26 +728,26 @@ export default function App() {
     fd.append('ageGroup',      basicInfo.ageGroup      || '')
     if (form.question?.trim()) fd.append('question', form.question.trim())
     const res = await fetch('/api/create-ai-checkout-session', { method: 'POST', body: fd })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error)
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.url) throw new Error(data.error || '決済の開始に失敗しました。時間をおいて再度お試しください。')
     window.location.href = data.url
   }
 
   const handleConsultSubmit = async (form) => {
     const fd = buildFormData() // ← ファイルも含める
-    fd.append('name', form.name)
-    fd.append('email', form.email)
+    fd.append('name', (form.name || '').trim())
+    fd.append('email', (form.email || '').trim())
     fd.append('message', form.message || '')
     fd.append('structure',     basicInfo.structure     || '')
     fd.append('floors',        basicInfo.floors        || '')
     fd.append('familySize',    basicInfo.familySize    || '')
     fd.append('childrenCount', basicInfo.childrenCount || '')
     fd.append('ageGroup',      basicInfo.ageGroup      || '')
-    if (form.price && form.price !== 3000) fd.append('price', form.price)
+    // 金額はサーバー側で決定するため price は送らない（couponCodeのみ送る）
     if (form.couponCode) fd.append('couponCode', form.couponCode)
     const res = await fetch('/api/create-checkout-session', { method: 'POST', body: fd })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error)
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.url) throw new Error(data.error || '決済の開始に失敗しました。時間をおいて再度お試しください。')
     window.location.href = data.url
   }
 
@@ -1819,7 +1819,7 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
 
       {verdict && (
         <div className="section">
-          <h3 className="section-title">AIからの verdict</h3>
+          <h3 className="section-title">AIからの総評</h3>
           <div className="verdict-card"><p className="verdict-text">{verdict}</p></div>
           <p className="supervisor-caption">※ 診断基準は一級建築士が監修しています</p>
         </div>
@@ -1902,7 +1902,8 @@ function DetailScreen({ detail, freeDiagnosis, onReset, onConsult, onBackId, onB
         )}
       </div>
 
-      {(onBackId || onBack) && <BackButton targetId={onBackId} onClick={onBack} label="無料診断結果に戻る" />}
+      {/* 無料診断結果が存在する場合のみ「戻る」を表示（決済リダイレクト着地時は無料診断が無く空画面になるため） */}
+      {freeDiagnosis && (onBackId || onBack) && <BackButton targetId={onBackId} onClick={onBack} label="無料診断結果に戻る" />}
       <button className="btn-ghost screenshot-hide" onClick={onReset}>最初からやり直す</button>
     </div>
   )
@@ -2301,7 +2302,7 @@ function SupervisorModal({ onClose }) {
             <tbody>
               <tr><th>氏名</th><td>齋藤泰地</td></tr>
               <tr><th>資格</th><td>一級建築士</td></tr>
-              <tr><th>登録番号</th><td>○○号</td></tr>
+              <tr><th>登録番号</th><td>第399134号</td></tr>
               <tr><th>監修内容</th><td>診断基準（評価項目・採点ロジック・AIプロンプト）の監修</td></tr>
             </tbody>
           </table>

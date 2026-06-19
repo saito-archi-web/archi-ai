@@ -1,6 +1,8 @@
 node_modules/
 frontend/dist/
 .env
+backend/tmp_paid_flags.json
+backend/tmp_paid_flags.json.tmp
 *.env.local
 .claude/
 *.pdf
